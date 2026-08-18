@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Soroti Youths Forum</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- FontAwesome for Modern Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body>
+
+  <!-- Floating Ambient Orbs -->
+  <div class="ambient-blob blob-1"></div>
+  <div class="ambient-blob blob-2"></div>
+
+  <!-- Authentication Screen -->
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="auth-branding">
+        <div class="logo">SOROTI YOUTHS FORUM</div>
+        <p class="auth-tagline">Connect, Share & Empower</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLoginBtn">Log In</button>
+        <button class="auth-tab" id="tabSignupBtn">Sign Up</button>
+      </div>
+
+      <div class="auth-error" id="authErrorMsg"></div>
+
+      <form id="authPageForm">
+        <div class="input-group hidden" id="fullNameGroup">
+          <input type="text" id="pageAuthName" placeholder="Full Name" />
+        </div>
+        <div class="input-group">
+          <input type="email" id="pageAuthEmail" placeholder="Email Address" required />
+        </div>
+        <div class="input-group">
+          <input type="password" id="pageAuthPassword" placeholder="Password" required />
+        </div>
+        <button type="submit" class="auth-submit-btn" id="pageAuthSubmitBtn">Log In</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main Application Content -->
+  <div id="appContent" class="hidden">
+
+    <!-- Toast Notification -->
+    <div class="floating-toast" id="toastNotice">
+      <span>🔥 <strong>Live Update:</strong> Youth Leadership event starts at 3 PM!</span>
+      <span class="toast-close"><i class="fa-solid fa-xmark"></i></span>
+    </div>
+
+    <!-- Quick Action Button (FAB) -->
+    <button class="fab-btn" title="Quick Post"><i class="fa-solid fa-bolt"></i></button>
+
+    <!-- Navigation Drawer -->
+    <aside class="nav-drawer" id="navDrawer">
+      <div class="drawer-header">
+        <div class="logo">SOROTI YOUTHS</div>
+        <button class="close-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="drawer-menu">
+        <div class="user-profile drawer-user-info" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
+          <div class="avatar profile-avatar" style="background: var(--color-red);">SY</div>
+          <div class="profile-details">
+            <span class="profile-name">User</span>
+            <span class="profile-email">user@example.com</span>
+          </div>
+        </div>
+        <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
+        <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge">3</span></a>
+        <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
+        <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
+        <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
+        
+        <button id="themeToggleBtn" title="Toggle Dark/Light Mode" style="margin-top: 15px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #ddd; background: transparent; cursor: pointer; color: var(--text-color); font-weight: bold;"><i class="fa-solid fa-moon"></i> Dark Mode</button>
+        <button class="logout-btn" style="margin-top: 10px; width: 100%;"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
+      </div>
+    </aside>
+
+    <!-- Top Header -->
+    <header>
+      <div class="top-bar">
+        <div class="nav-left">
+          <button class="nav-btn" title="Open Navigation"><i class="fa-solid fa-bars"></i></button>
+          <div class="logo">SOROTI YOUTHS FORUM</div>
+        </div>
+        <div class="nav-right">
+          <div class="user-profile hidden">
+            <div class="profile-details" style="text-align: right;">
+              <span class="profile-name">User</span>
+            </div>
+            <div class="avatar profile-avatar" style="background: var(--color-red);">SY</div>
+          </div>
+          <button class="signup-btn">Sign Up / Log In</button>
+        </div>
+      </div>
+
+      <!-- Separated Search Bar and Search Button -->
+      <div class="search-row">
+        <div class="search-bar-wrap">
+          <input type="text" class="search-input" id="searchInput" placeholder="Search Soroti Youth Forum..." />
+        </div>
+        <button class="search-action-btn" id="searchActionBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+      </div>
+    </header>
+
+    <!-- Main Grid Layout -->
+    <div class="container">
+      
+      <!-- Left Column (Desktop Navigation) -->
+      <div class="sidebar-desktop">
+        <div class="card drawer-menu">
+          <div class="animated-stripe-bar"></div>
+          <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
+          <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge">3</span></a>
+          <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
+          <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
+          <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
+        </div>
+      </div>
+
+      <!-- Middle Column: Feed & Tabs -->
+      <main>
+        
+        <!-- Three Buttons in Line -->
+        <div class="card action-tabs">
+          <button class="tab-btn active" data-tab="posts"><i class="fa-solid fa-newspaper"></i> Posts</button>
+          <button class="tab-btn" data-tab="chats"><i class="fa-solid fa-comments"></i> Chats</button>
+          <button class="tab-btn" data-tab="friends"><i class="fa-solid fa-user-group"></i> Friends</button>
+        </div>
+
+        <!-- TAB 1: Posts View -->
+        <div id="postsView" class="tab-view">
+          <div class="card create-post" id="postBox">
+            <div class="animated-stripe-bar"></div>
+            <h3>Create a Post</h3>
+            <textarea id="postText" placeholder="What's on your mind? Share updates with Soroti Youth..."></textarea>
+            
+            <!-- Attachment & Photo Buttons for Posting Area -->
+            <div class="post-actions-row">
+              <div class="media-attach-btns">
+                <label class="attach-label" title="Attach Photo">
+                  <i class="fa-solid fa-camera"></i> Photo <input type="file" id="postPhotoInput" accept="image/*" style="display: none;" />
+                </label>
+                <label class="attach-label" title="Attach File">
+                  <i class="fa-solid fa-paperclip"></i> File <input type="file" id="postFileInput" style="display: none;" />
+                </label>
+              </div>
+              <button class="post-btn">Post</button>
+            </div>
+            <div class="clear"></div>
+          </div>
+          <div id="feedContainer"></div>
+        </div>
+
+        <!-- TAB 2: Chats View -->
+        <div id="chatsView" class="tab-view hidden">
+          <div class="card">
+            <div class="animated-stripe-bar"></div>
+            <h3>Recent Conversations</h3>
+            
+            <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('John O.')">
+              <div class="friend-user">
+                <div class="avatar-wrapper">
+                  <div class="avatar">JO</div>
+                  <div class="online-dot"></div>
+                </div>
+                <div>
+                  <strong style="font-size: 14px; display: block;">John O.</strong>
+                  <span style="font-size: 12px; opacity: 0.7;">See you at the workshop this Saturday!</span>
+                </div>
+              </div>
+              <span style="font-size: 11px; opacity: 0.5;">10m ago</span>
+            </div>
+
+            <div class="friend-item" style="cursor: pointer; padding: 10px 0;" onclick="openChatFromTab('Emmanuel A.')">
+              <div class="friend-user">
+                <div class="avatar-wrapper">
+                  <div class="avatar">EA</div>
+                  <div class="online-dot"></div>
+                </div>
+                <div>
+                  <strong style="font-size: 14px; display: block;">Emmanuel A.</strong>
+                  <span style="font-size: 12px; opacity: 0.7;">Thanks for sharing the update.</span>
+                </div>
+              </div>
+              <span style="font-size: 11px; opacity: 0.5;">1h ago</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Friends View -->
+        <div id="friendsView" class="tab-view hidden">
+          <div class="card">
+            <div class="animated-stripe-bar"></div>
+            <h3>Soroti Youth Network</h3>
+            
+            <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
+              <div class="friend-user">
+                <div class="avatar-wrapper">
+                  <div class="avatar">JO</div>
+                  <div class="online-dot"></div>
+                </div>
+                <div>
+                  <strong>John O.</strong>
+                  <span style="display: block; font-size: 12px; opacity: 0.7;">Software Developer • Soroti</span>
+                </div>
+              </div>
+              <button class="chat-btn" onclick="openChatFromTab('John O.')"><i class="fa-solid fa-message"></i> Message</button>
+            </div>
+
+            <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
+              <div class="friend-user">
+                <div class="avatar-wrapper">
+                  <div class="avatar">EA</div>
+                  <div class="online-dot"></div>
+                </div>
+                <div>
+                  <strong>Emmanuel A.</strong>
+                  <span style="display: block; font-size: 12px; opacity: 0.7;">Community Organizer • Soroti</span>
+                </div>
+              </div>
+              <button class="chat-btn" onclick="openChatFromTab('Emmanuel A.')"><i class="fa-solid fa-message"></i> Message</button>
+            </div>
+
+            <div class="friend-item">
+              <div class="friend-user">
+                <div class="avatar-wrapper">
+                  <div class="avatar">SA</div>
+                </div>
+                <div>
+                  <strong>Sarah A.</strong>
+                  <span style="display: block; font-size: 12px; opacity: 0.7;">Student • Soroti University</span>
+                </div>
+              </div>
+              <button class="chat-btn" onclick="openChatFromTab('Sarah A.')"><i class="fa-solid fa-message"></i> Message</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 4: Notifications View -->
+        <div id="notificationsView" class="tab-view hidden">
+          <div class="card">
+            <div class="animated-stripe-bar"></div>
+            <h3>Notifications</h3>
+            <div id="notificationsContainer" style="margin-top: 10px;">
+              <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                <span><i class="fa-solid fa-fire" style="color: var(--color-red);"></i> <strong>Live Update:</strong> Youth Leadership event starts at 3 PM!</span>
+                <span style="font-size: 11px; opacity: 0.5;">2h ago</span>
+              </div>
+              <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                <span><i class="fa-solid fa-heart" style="color: var(--color-red);"></i> <strong>John O.</strong> liked your post.</span>
+                <span style="font-size: 11px; opacity: 0.5;">5h ago</span>
+              </div>
+              <div class="friend-item" style="padding: 10px 0;">
+                <span><i class="fa-solid fa-comment" style="color: var(--color-yellow);"></i> <strong>Emmanuel A.</strong> commented on your update.</span>
+                <span style="font-size: 11px; opacity: 0.5;">1d ago</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 5: Settings View -->
+        <div id="settingsView" class="tab-view hidden">
+          <div class="card">
+            <div class="animated-stripe-bar"></div>
+            <h3>Account Settings</h3>
+            
+            <!-- Profile Picture Upload Section -->
+            <div style="display: flex; align-items: center; gap: 15px; margin: 15px 0;">
+              <div class="avatar profile-avatar" id="settingsAvatarPreview" style="width: 50px; height: 50px; font-size: 16px;">SY</div>
+              <div>
+                <label class="attach-label" style="display: inline-block; cursor: pointer;">
+                  <i class="fa-solid fa-camera"></i> Change Photo
+                  <input type="file" id="profilePicInput" accept="image/*" style="display: none;" />
+                </label>
+                <span style="display: block; font-size: 11px; opacity: 0.6; margin-top: 4px;">JPG, PNG, or GIF</span>
+              </div>
+            </div>
+
+            <form id="settingsForm" style="margin-top: 15px;">
+              <div class="input-group">
+                <label style="font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px;">Display Name</label>
+                <input type="text" id="settingsNameInput" placeholder="Update Name" />
+              </div>
+              <div class="input-group">
+                <label style="font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px;">Email Address</label>
+                <input type="email" id="settingsEmailInput" placeholder="Update Email" />
+              </div>
+              <button type="button" id="saveSettingsBtn" class="post-btn" style="width: 100%;">Save Changes</button>
+            </form>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- Right Column: Friends & Live Chat Shortcut -->
+      <div class="sidebar-right">
+        <div class="card">
+          <div class="animated-stripe-bar"></div>
+          <h3>Friends & Chat</h3>
+          
+          <div class="friend-item">
+            <div class="friend-user">
+              <div class="avatar-wrapper">
+                <div class="avatar">JO</div>
+                <div class="online-dot"></div>
+              </div>
+              <span>John O.</span>
+            </div>
+            <button class="chat-btn" data-name="John O."><i class="fa-solid fa-comment"></i> Chat</button>
+          </div>
+
+          <div class="friend-item">
+            <div class="friend-user">
+              <div class="avatar-wrapper">
+                <div class="avatar">EA</div>
+                <div class="online-dot"></div>
+              </div>
+              <span>Emmanuel A.</span>
+            </div>
+            <button class="chat-btn" data-name="Emmanuel A."><i class="fa-solid fa-comment"></i> Chat</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Chat Popup with Call, Video Call, and Attachment Buttons -->
+    <div class="chat-popup hidden" id="chatPopup">
+      <div class="chat-header">
+        <span id="chatFriendName">Chat</span>
+        <div class="chat-actions">
+          <button class="action-icon call-btn" title="Voice Call"><i class="fa-solid fa-phone"></i></button>
+          <button class="action-icon video-btn" title="Video Call"><i class="fa-solid fa-video"></i></button>
+          <button class="action-icon close-btn" id="chatCloseBtn"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+      <div class="chat-messages" id="chatMessages"></div>
+      
+      <!-- Chat Input Area with Attachment Elements -->
+      <div class="chat-input-row">
+        <label class="chat-attach-icon" title="Attach Photo/File">
+          <i class="fa-solid fa-paperclip"></i>
+          <input type="file" id="chatFileInput" style="display: none;" />
+        </label>
+        <input type="text" id="chatInput" placeholder="Type a message..." />
+        <button id="chatSendBtn"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
