@@ -5,20 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Soroti Youths Forum</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- FontAwesome for Modern Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
 </head>
 <body>
 
-  <!-- Floating Ambient Orbs -->
   <div class="ambient-blob blob-1"></div>
   <div class="ambient-blob blob-2"></div>
 
-  <!-- Authentication Screen -->
   <div class="auth-screen" id="authScreen">
     <div class="auth-card">
       <div class="auth-branding">
-        <div class="logo">SOROTI YOUTHS FORUM</div>
+        <div class="logo">
+          <img src="logo.png" alt="Soroti Youths Forum Logo" class="auth-logo-img">
+        </div>
         <p class="auth-tagline">Connect, Share & Empower</p>
       </div>
 
@@ -44,22 +43,21 @@
     </div>
   </div>
 
-  <!-- Main Application Content -->
   <div id="appContent" class="hidden">
 
-    <!-- Toast Notification -->
     <div class="floating-toast" id="toastNotice">
       <span>🔥 <strong>Live Update:</strong> Youth Leadership event starts at 3 PM!</span>
       <span class="toast-close"><i class="fa-solid fa-xmark"></i></span>
     </div>
 
-    <!-- Quick Action Button (FAB) -->
-    <button class="fab-btn" title="Quick Post"><i class="fa-solid fa-bolt"></i></button>
+    <button class="fab-btn" id="fabBtn" title="Quick Post"><i class="fa-solid fa-bolt"></i></button>
+    <button class="back-to-top-btn hidden" id="backToTopBtn" title="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
 
-    <!-- Navigation Drawer -->
     <aside class="nav-drawer" id="navDrawer">
       <div class="drawer-header">
-        <div class="logo">SOROTI YOUTHS</div>
+        <div class="logo">
+          <img src="logo.png" alt="Soroti Youths Forum Logo" class="header-logo-img">
+        </div>
         <button class="close-btn"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="drawer-menu">
@@ -81,13 +79,15 @@
       </div>
     </aside>
 
-    <!-- Top Header -->
     <header>
       <div class="top-bar">
         <div class="nav-left">
           <button class="nav-btn" title="Open Navigation"><i class="fa-solid fa-bars"></i></button>
-          <div class="logo">SOROTI YOUTHS FORUM</div>
+          <div class="logo">
+            <img src="logo.png" alt="Soroti Youths Forum Logo" class="header-logo-img">
+          </div>
         </div>
+
         <div class="nav-right">
           <div class="user-profile hidden">
             <div class="profile-details" style="text-align: right;">
@@ -99,7 +99,6 @@
         </div>
       </div>
 
-      <!-- Separated Search Bar and Search Button -->
       <div class="search-row">
         <div class="search-bar-wrap">
           <input type="text" class="search-input" id="searchInput" placeholder="Search Soroti Youth Forum..." />
@@ -108,10 +107,8 @@
       </div>
     </header>
 
-    <!-- Main Grid Layout -->
     <div class="container">
       
-      <!-- Left Column (Desktop Navigation) -->
       <div class="sidebar-desktop">
         <div class="card drawer-menu">
           <div class="animated-stripe-bar"></div>
@@ -123,24 +120,20 @@
         </div>
       </div>
 
-      <!-- Middle Column: Feed & Tabs -->
       <main>
         
-        <!-- Three Buttons in Line -->
         <div class="card action-tabs">
           <button class="tab-btn active" data-tab="posts"><i class="fa-solid fa-newspaper"></i> Posts</button>
           <button class="tab-btn" data-tab="chats"><i class="fa-solid fa-comments"></i> Chats</button>
           <button class="tab-btn" data-tab="friends"><i class="fa-solid fa-user-group"></i> Friends</button>
         </div>
 
-        <!-- TAB 1: Posts View -->
         <div id="postsView" class="tab-view">
           <div class="card create-post" id="postBox">
             <div class="animated-stripe-bar"></div>
             <h3>Create a Post</h3>
             <textarea id="postText" placeholder="What's on your mind? Share updates with Soroti Youth..."></textarea>
             
-            <!-- Attachment & Photo Buttons for Posting Area -->
             <div class="post-actions-row">
               <div class="media-attach-btns">
                 <label class="attach-label" title="Attach Photo">
@@ -157,7 +150,6 @@
           <div id="feedContainer"></div>
         </div>
 
-        <!-- TAB 2: Chats View -->
         <div id="chatsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
@@ -193,7 +185,6 @@
           </div>
         </div>
 
-        <!-- TAB 3: Friends View -->
         <div id="friendsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
@@ -242,7 +233,6 @@
           </div>
         </div>
 
-        <!-- TAB 4: Notifications View -->
         <div id="notificationsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
@@ -264,13 +254,11 @@
           </div>
         </div>
 
-        <!-- TAB 5: Settings View -->
         <div id="settingsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
             <h3>Account Settings</h3>
             
-            <!-- Profile Picture Upload Section -->
             <div style="display: flex; align-items: center; gap: 15px; margin: 15px 0;">
               <div class="avatar profile-avatar" id="settingsAvatarPreview" style="width: 50px; height: 50px; font-size: 16px;">SY</div>
               <div>
@@ -298,7 +286,6 @@
 
       </main>
 
-      <!-- Right Column: Friends & Live Chat Shortcut -->
       <div class="sidebar-right">
         <div class="card">
           <div class="animated-stripe-bar"></div>
@@ -330,7 +317,6 @@
 
     </div>
 
-    <!-- Chat Popup with Call, Video Call, and Attachment Buttons -->
     <div class="chat-popup hidden" id="chatPopup">
       <div class="chat-header">
         <span id="chatFriendName">Chat</span>
@@ -342,7 +328,6 @@
       </div>
       <div class="chat-messages" id="chatMessages"></div>
       
-      <!-- Chat Input Area with Attachment Elements -->
       <div class="chat-input-row">
         <label class="chat-attach-icon" title="Attach Photo/File">
           <i class="fa-solid fa-paperclip"></i>

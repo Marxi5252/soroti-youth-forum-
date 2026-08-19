@@ -20,7 +20,6 @@ document.addEventListener('DOMContentLoaded', () => {
       themeToggleBtn.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
     });
   }
-  // ---------------------------------------------
 
   const DEFAULT_POSTS = [
     {
@@ -29,6 +28,8 @@ document.addEventListener('DOMContentLoaded', () => {
       initials: 'EA',
       time: '2 hours ago',
       content: 'Excited for the upcoming Soroti Youth Innovation Hub workshop this Saturday!',
+      attachment: null,
+      attachmentType: null,
       likes: 12,
       liked: false,
       dislikes: 1,
@@ -43,6 +44,14 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentUser = JSON.parse(localStorage.getItem('soroti_forum_user')) || null;
   let isSignUpMode = false;
   let uploadedAvatarData = null;
+
+  // Global variables to store temporary base64 image data for previews
+  let currentPostAttachmentData = null;
+  let currentPostAttachmentType = null;
+  let currentPostAttachmentName = null;
+
+  let currentChatAttachmentData = null;
+  let currentChatAttachmentName = null;
 
   const elements = {
     authScreen: document.getElementById('authScreen'),
@@ -74,8 +83,10 @@ document.addEventListener('DOMContentLoaded', () => {
     postPhotoInput: document.getElementById('postPhotoInput'),
     postFileInput: document.getElementById('postFileInput'),
     postBtn: document.querySelector('.post-btn'),
+    postBox: document.getElementById('postBox'),
     feedContainer: document.getElementById('feedContainer'),
-    fabBtn: document.querySelector('.fab-btn'),
+    fabBtn: document.getElementById('fabBtn'),
+    backToTopBtn: document.getElementById('backToTopBtn'),
     toastNotice: document.getElementById('toastNotice'),
     toastClose: document.querySelector('.toast-close'),
 
@@ -96,8 +107,43 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function init() {
+    setupPreviewContainers();
     updateAuthView();
     bindEvents();
+  }
+
+  // Inject preview elements dynamically into the post form and chat box
+  function setupPreviewContainers() {
+    if (elements.postBox) {
+      const previewDiv = document.createElement('div');
+      previewDiv.id = 'postPreviewContainer';
+      previewDiv.style.cssText = 'margin-top: 10px; display: none; position: relative;';
+      previewDiv.innerHTML = `
+        <div style="position: relative; display: inline-block;">
+          <img id="postPreviewImg" src="" style="max-height: 180px; max-width: 100%; border-radius: 8px; border: 1px solid #ddd; display: none;" />
+          <div id="postPreviewFile" style="padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px; font-size: 12px; display: none;"></div>
+          <button id="clearPostPreviewBtn" type="button" style="position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-size: 11px;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      `;
+      const actionsRow = elements.postBox.querySelector('.post-actions-row');
+      if (actionsRow) elements.postBox.insertBefore(previewDiv, actionsRow);
+    }
+
+    if (elements.chatPopup) {
+      const chatPreviewDiv = document.createElement('div');
+      chatPreviewDiv.id = 'chatPreviewContainer';
+      chatPreviewDiv.style.cssText = 'padding: 5px 10px; background: rgba(0,0,0,0.03); display: none; align-items: center; justify-content: space-between; font-size: 12px; border-top: 1px solid rgba(0,0,0,0.05);';
+      chatPreviewDiv.innerHTML = `
+        <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;"></span>
+        <button id="clearChatPreviewBtn" type="button" style="background: none; border: none; color: #888; cursor: pointer;"><i class="fa-solid fa-xmark"></i></button>
+      `;
+      const chatInputRow = elements.chatPopup.querySelector('.chat-input-row');
+      if (chatInputRow) elements.chatPopup.insertBefore(chatPreviewDiv, chatInputRow);
+    }
+  }
+
+  function getCurrentSearchQuery() {
+    return elements.searchInput ? elements.searchInput.value.trim() : '';
   }
 
   function updateAuthView() {
@@ -159,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     localStorage.setItem('soroti_forum_user', JSON.stringify(currentUser));
     updateAuthView();
-    showToast(`Welcome back, ${currentUser.name}! 🎉`);
+    showToast(`Welcome back, ${currentUser.name}!`);
 
     elements.pageAuthEmail.value = '';
     elements.pageAuthPassword.value = '';
@@ -191,14 +237,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Populate settings input fields if available
     const nameInput = document.getElementById('settingsNameInput');
     const emailInput = document.getElementById('settingsEmailInput');
     if (nameInput) nameInput.value = currentUser.name;
     if (emailInput) emailInput.value = currentUser.email;
   }
 
-  function renderFeed(filterQuery = '') {
+    function renderFeed(filterQuery = '') {
     if (!elements.feedContainer) return;
 
     let displayPosts = posts;
@@ -232,9 +277,18 @@ document.addEventListener('DOMContentLoaded', () => {
           <button onclick="deletePost(${post.id})" style="background: none; border: none; color: #999; cursor: pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
         
-        <p style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>
+        ${post.content ? `<p style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>` : ''}
         
-        ${post.attachment ? `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 6px; border-radius: 6px;"><i class="fa-solid fa-paperclip"></i> Attached: ${escapeHTML(post.attachment)}</div>` : ''}
+        <!-- DISPLAY ATTACHMENT / IMAGE HERE -->
+        ${post.attachment ? (
+          (post.attachmentType === 'image' || post.attachment.startsWith('data:image')) ? 
+            `<div style="margin-bottom: 12px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1);">
+              <img src="${post.attachment}" alt="Post Image" style="width: 100%; max-height: 380px; object-fit: cover; display: block;" />
+             </div>` : 
+            `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
+              <i class="fa-solid fa-paperclip"></i> Attached File: <strong>${escapeHTML(post.attachmentName || post.attachment)}</strong>
+             </div>`
+        ) : ''}
         
         <div style="display: flex; gap: 15px; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 10px; font-size: 13px; align-items: center;">
           <button onclick="toggleLike(${post.id})" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${post.liked ? '#e50914' : 'inherit'};">
@@ -266,21 +320,21 @@ document.addEventListener('DOMContentLoaded', () => {
     `).join('');
   }
 
+
   function handleCreatePost() {
     const content = elements.postText.value.trim();
-    const photoFile = elements.postPhotoInput.files[0];
-    const generalFile = elements.postFileInput.files[0];
-    const attachedName = photoFile ? photoFile.name : (generalFile ? generalFile.name : null);
 
-    if (!content && !attachedName) return;
+    if (!content && !currentPostAttachmentData) return;
 
     const newPost = {
       id: Date.now(),
       author: currentUser ? currentUser.name : 'Anonymous',
       initials: getInitials(currentUser ? currentUser.name : 'AN'),
       time: 'Just now',
-      content: content || '[Attachment]',
-      attachment: attachedName,
+      content: content,
+      attachment: currentPostAttachmentData,
+      attachmentType: currentPostAttachmentType,
+      attachmentName: currentPostAttachmentName,
       likes: 0,
       liked: false,
       dislikes: 0,
@@ -291,22 +345,49 @@ document.addEventListener('DOMContentLoaded', () => {
     posts.unshift(newPost);
     localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
     renderFeed();
+
+    // Reset post form and previews
     elements.postText.value = '';
     elements.postPhotoInput.value = '';
     elements.postFileInput.value = '';
-    showToast('🚀 Post published successfully!');
+    clearPostPreview();
+
+    showToast('Post published successfully!');
+  }
+
+  function clearPostPreview() {
+    currentPostAttachmentData = null;
+    currentPostAttachmentType = null;
+    currentPostAttachmentName = null;
+    
+    const container = document.getElementById('postPreviewContainer');
+    const img = document.getElementById('postPreviewImg');
+    const fileTxt = document.getElementById('postPreviewFile');
+    
+    if (container) container.style.display = 'none';
+    if (img) { img.src = ''; img.style.display = 'none'; }
+    if (fileTxt) { fileTxt.textContent = ''; fileTxt.style.display = 'none'; }
+  }
+
+  function clearChatPreview() {
+    currentChatAttachmentData = null;
+    currentChatAttachmentName = null;
+    
+    const container = document.getElementById('chatPreviewContainer');
+    if (container) container.style.display = 'none';
+    if (elements.chatFileInput) elements.chatFileInput.value = '';
   }
 
   window.toggleLike = function(id) {
     posts = posts.map(p => p.id === id ? { ...p, likes: p.liked ? p.likes - 1 : p.likes + 1, liked: !p.liked } : p);
     localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(elements.searchInput ? elements.searchInput.value : '');
+    renderFeed(getCurrentSearchQuery());
   };
 
   window.toggleDislike = function(id) {
     posts = posts.map(p => p.id === id ? { ...p, dislikes: (p.dislikes || 0) + (p.disliked ? -1 : 1), disliked: !p.disliked } : p);
     localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(elements.searchInput ? elements.searchInput.value : '');
+    renderFeed(getCurrentSearchQuery());
   };
 
   window.toggleCommentSection = function(id) {
@@ -333,20 +414,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(elements.searchInput ? elements.searchInput.value : '');
+    renderFeed(getCurrentSearchQuery());
   };
 
   window.deletePost = function(id) {
     posts = posts.filter(p => p.id !== id);
     localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(elements.searchInput ? elements.searchInput.value : '');
+    renderFeed(getCurrentSearchQuery());
   };
 
   window.openChat = function(friendName) {
     if (!elements.chatPopup) return;
     elements.chatFriendName.textContent = `Chat with ${friendName || 'Friend'}`;
     elements.chatPopup.classList.remove('hidden');
-    elements.chatMessages.innerHTML = `<div class="chat-msg system">Started chat with ${friendName || 'Friend'}</div>`;
+    elements.chatMessages.innerHTML = `<div class="chat-msg system">Started chat with ${escapeHTML(friendName || 'Friend')}</div>`;
   };
 
   window.openChatFromTab = function(friendName) {
@@ -355,21 +436,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function sendChatMessage() {
     const text = elements.chatInput.value.trim();
-    const chatFile = elements.chatFileInput.files[0];
-    if (!text && !chatFile) return;
-
-    let content = text;
-    if (chatFile) {
-      content += ` [Attached: ${chatFile.name}]`;
-    }
+    if (!text && !currentChatAttachmentData) return;
 
     const msgEl = document.createElement('div');
     msgEl.className = 'chat-msg outgoing';
-    msgEl.textContent = content;
+    
+    let html = '';
+    if (text) {
+      html += `<div>${escapeHTML(text)}</div>`;
+    }
+    if (currentChatAttachmentData) {
+      html += `<div style="margin-top: 5px;"><img src="${currentChatAttachmentData}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
+    }
+    
+    msgEl.innerHTML = html;
     elements.chatMessages.appendChild(msgEl);
 
     elements.chatInput.value = '';
-    elements.chatFileInput.value = '';
+    clearChatPreview();
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
   }
 
@@ -386,6 +470,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getInitials(name) {
     return name.split(' ').map(p => p[0]).join('').toUpperCase().substring(0, 2) || 'SY';
+  }
+
+  function switchTab(targetTab) {
+    if (elements.navDrawer) elements.navDrawer.classList.remove('open');
+
+    elements.tabViews.forEach(view => view.classList.add('hidden'));
+    const activeView = document.getElementById(`${targetTab}View`);
+    if (activeView) activeView.classList.remove('hidden');
+
+    elements.tabBtns.forEach(btn => {
+      if (btn.getAttribute('data-tab') === targetTab) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
   }
 
   function bindEvents() {
@@ -417,7 +517,92 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (elements.searchActionBtn) {
       elements.searchActionBtn.addEventListener('click', () => {
-        if(elements.searchInput) renderFeed(elements.searchInput.value.trim());
+        renderFeed(getCurrentSearchQuery());
+      });
+    }
+
+    // --- Attachment Photo Input Listener (Post) ---
+    if (elements.postPhotoInput) {
+      elements.postPhotoInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            currentPostAttachmentData = event.target.result;
+            currentPostAttachmentType = 'image';
+            currentPostAttachmentName = file.name;
+
+            const container = document.getElementById('postPreviewContainer');
+            const img = document.getElementById('postPreviewImg');
+            const fileTxt = document.getElementById('postPreviewFile');
+
+            if (container && img && fileTxt) {
+              container.style.display = 'block';
+              img.src = currentPostAttachmentData;
+              img.style.display = 'block';
+              fileTxt.style.display = 'none';
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    // --- Attachment File Input Listener (Post) ---
+    if (elements.postFileInput) {
+      elements.postFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          currentPostAttachmentData = file.name;
+          currentPostAttachmentType = 'file';
+          currentPostAttachmentName = file.name;
+
+          const container = document.getElementById('postPreviewContainer');
+          const img = document.getElementById('postPreviewImg');
+          const fileTxt = document.getElementById('postPreviewFile');
+
+          if (container && img && fileTxt) {
+            container.style.display = 'block';
+            img.style.display = 'none';
+            fileTxt.textContent = `Attached File: ${file.name}`;
+            fileTxt.style.display = 'block';
+          }
+        }
+      });
+    }
+
+    // --- Clear Preview Button (Post) ---
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('#clearPostPreviewBtn')) {
+        clearPostPreview();
+        elements.postPhotoInput.value = '';
+        elements.postFileInput.value = '';
+      }
+      if (e.target.closest('#clearChatPreviewBtn')) {
+        clearChatPreview();
+      }
+    });
+
+    // --- Attachment File Input Listener (Chat Popup) ---
+    if (elements.chatFileInput) {
+      elements.chatFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            currentChatAttachmentData = event.target.result;
+            currentChatAttachmentName = file.name;
+
+            const container = document.getElementById('chatPreviewContainer');
+            const previewText = document.getElementById('chatPreviewText');
+
+            if (container && previewText) {
+              container.style.display = 'flex';
+              previewText.textContent = `Attached: ${file.name}`;
+            }
+          };
+          reader.readAsDataURL(file);
+        }
       });
     }
 
@@ -429,6 +614,22 @@ document.addEventListener('DOMContentLoaded', () => {
           elements.postText.focus();
           elements.postText.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
+      });
+    }
+
+    window.addEventListener('scroll', () => {
+      if (elements.backToTopBtn) {
+        if (window.scrollY > 200) {
+          elements.backToTopBtn.classList.remove('hidden');
+        } else {
+          elements.backToTopBtn.classList.add('hidden');
+        }
+      }
+    });
+
+    if (elements.backToTopBtn) {
+      elements.backToTopBtn.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     }
 
@@ -455,14 +656,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     if (elements.callBtn) {
-      elements.callBtn.addEventListener('click', () => showToast('📞 Voice calling feature coming soon!'));
+      elements.callBtn.addEventListener('click', () => showToast('Voice calling feature coming soon!'));
     }
     
     if (elements.videoBtn) {
-      elements.videoBtn.addEventListener('click', () => showToast('📹 Video calling feature coming soon!'));
+      elements.videoBtn.addEventListener('click', () => showToast('Video calling feature coming soon!'));
     }
 
-    // Profile Picture Upload Preview Handler
     const profilePicInput = document.getElementById('profilePicInput');
     if (profilePicInput) {
       profilePicInput.addEventListener('change', (e) => {
@@ -484,7 +684,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-// Save Settings Button Handler
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     if (saveSettingsBtn) {
       saveSettingsBtn.addEventListener('click', () => {
@@ -498,47 +697,23 @@ document.addEventListener('DOMContentLoaded', () => {
           
           localStorage.setItem('soroti_forum_user', JSON.stringify(currentUser));
           updateUserUI();
-          showToast('⚙️ Settings updated successfully!');
+          showToast('Settings updated successfully!');
         }
       });
     }
 
-    // Bind Navigation Link Items for Tab Switching
     document.querySelectorAll('.nav-link-item').forEach(link => {
       link.addEventListener('click', (e) => {
         e.preventDefault();
         const targetTab = link.getAttribute('data-tab');
-        
-        if (elements.navDrawer) elements.navDrawer.classList.remove('open');
-
-        elements.tabViews.forEach(view => view.classList.add('hidden'));
-        const activeView = document.getElementById(`${targetTab}View`);
-        if (activeView) activeView.classList.remove('hidden');
-
-        // Also sync main action tabs highlight if applicable
-        elements.tabBtns.forEach(btn => {
-          if (btn.getAttribute('data-tab') === targetTab) {
-            btn.classList.add('active');
-          } else {
-            btn.classList.remove('active');
-          }
-        });
+        switchTab(targetTab);
       });
     });
     
     elements.tabBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
         const targetTab = e.currentTarget.getAttribute('data-tab');
-
-        elements.tabBtns.forEach(b => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-
-        elements.tabViews.forEach(view => {
-          view.classList.add('hidden');
-          if (view.id === `${targetTab}View`) {
-            view.classList.remove('hidden');
-          }
-        });
+        switchTab(targetTab);
       });
     });
   }
