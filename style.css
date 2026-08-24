@@ -8,6 +8,8 @@
   --bg-color: #f4f6f9;
   --text-color: #111111;
   --card-bg: #ffffff;
+  --border-color: rgba(0,0,0,0.1);
+  --item-hover-bg: rgba(0,0,0,0.03);
 }
 
 /* Dark Theme Variables */
@@ -15,6 +17,8 @@
   --bg-color: #121212;
   --text-color: #e0e0e0;
   --card-bg: #1e1e1e;
+  --border-color: rgba(255,255,255,0.1);
+  --item-hover-bg: rgba(255,255,255,0.05);
 }
 
 * {
@@ -95,7 +99,7 @@ body {
 .auth-tabs {
   display: flex;
   margin-bottom: 20px;
-  border-bottom: 2px solid #eee;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .auth-tab {
@@ -121,7 +125,7 @@ body {
 .input-group input {
   width: 100%;
   padding: 12px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   outline: none;
   font-size: 14px;
@@ -147,7 +151,7 @@ body {
   text-align: center;
 }
 
-/* Main Layout Header */
+/* Header Navigation */
 header {
   background: var(--color-black);
   color: white;
@@ -193,12 +197,14 @@ header {
   font-size: 13px;
 }
 
-/* Separated Search Row */
+/* Red Search Button & Aligned Search Row */
 .search-row {
   margin-top: 12px;
   display: flex;
   justify-content: center;
+  align-items: stretch;
   gap: 10px;
+  width: 100%;
 }
 
 .search-bar-wrap {
@@ -209,11 +215,13 @@ header {
   overflow: hidden;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
   display: flex;
+  flex: 1;
+  align-items: center;
 }
 
 .search-input {
   width: 100%;
-  padding: 8px 14px;
+  padding: 10px 16px;
   border: none;
   font-size: 13px;
   outline: none;
@@ -222,24 +230,32 @@ header {
 }
 
 .search-action-btn {
-  background: var(--color-yellow);
+  background: var(--color-red);
+  color: #ffffff;
   border: none;
-  padding: 0 20px;
+  padding: 0 22px;
   border-radius: 20px;
   cursor: pointer;
   font-weight: bold;
   font-size: 13px;
-  color: var(--color-black);
-  transition: background 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease, transform 0.1s ease;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  white-space: nowrap;
 }
 
 .search-action-btn:hover {
-  background: var(--color-red);
-  color: white;
+  background: #b20710;
+  color: #ffffff;
 }
 
-/* Grid & Columns */
+.search-action-btn:active {
+  transform: scale(0.97);
+}
+
+/* Grid & Layout Columns */
 .container {
   max-width: 1100px;
   margin: 20px auto;
@@ -249,16 +265,7 @@ header {
   gap: 20px;
 }
 
-@media(max-width: 900px) {
-  .container {
-    grid-template-columns: 1fr;
-  }
-  .sidebar-desktop, .sidebar-right {
-    display: none;
-  }
-}
-
-/* Red / Gradient Stripe Bar at Top of Cards & Posts */
+/* Red / Yellow Top Accent Stripe */
 .animated-stripe-bar {
   position: absolute;
   top: 0;
@@ -268,14 +275,14 @@ header {
   background: linear-gradient(90deg, var(--color-red), var(--color-yellow));
 }
 
-/* Drawer Menu Links */
+/* Drawer Menu Items */
 .drawer-menu a {
   display: block;
   padding: 10px 0;
   color: var(--text-color);
   text-decoration: none;
   font-size: 14px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .drawer-menu a:hover {
@@ -289,13 +296,15 @@ header {
   border-radius: 10px;
   font-size: 10px;
   float: right;
+  display: none;
 }
 
-/* Inline Tabs */
+/* Navigation Action Tabs (CENTERED ONLY) */
 .action-tabs {
   display: flex;
-  justify-content: space-around;
-  padding: 5px 0;
+  justify-content: center;
+  gap: 10px;
+  padding: 5px 15px;
   margin-bottom: 15px;
 }
 
@@ -320,7 +329,7 @@ header {
   border-bottom-color: var(--color-red);
 }
 
-/* User Profile Details Layout */
+/* Profiles & User Badges (Red Ring Highlights ONLY when Online) */
 .user-profile {
   display: flex;
   align-items: center;
@@ -347,23 +356,62 @@ header {
   color: var(--text-color);
 }
 
+.avatar-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  padding: 2px;
+  border: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s ease;
+}
+
+.avatar-wrapper.online,
+.avatar-wrapper:has(.online-dot) {
+  border-color: var(--color-red);
+}
+
+.online-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 9px;
+  height: 9px;
+  background-color: #2ec4b6;
+  border: 2px solid var(--card-bg);
+  border-radius: 50%;
+}
+
 .profile-avatar, .avatar {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #ccc;
+  background-color: #ccc;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
   font-weight: bold;
   font-size: 13px;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 
-/* Create Post Area */
+.profile-avatar {
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 2px var(--card-bg);
+}
+
+.profile-avatar.online {
+  border-color: var(--color-red);
+}
+
+/* Create Post Form */
 .create-post textarea {
   width: 100%;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 10px;
   resize: none;
@@ -388,14 +436,14 @@ header {
 }
 
 .attach-label {
-  background: rgba(0,0,0,0.04);
+  background: var(--item-hover-bg);
   padding: 6px 10px;
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
   font-weight: 600;
   color: var(--text-color);
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-color);
 }
 
 .post-btn {
@@ -410,7 +458,7 @@ header {
 
 .clear { clear: both; }
 
-/* Friend List Items */
+/* Network User List Items */
 .friend-item {
   display: flex;
   justify-content: space-between;
@@ -424,23 +472,8 @@ header {
   gap: 10px;
 }
 
-.avatar-wrapper {
-  position: relative;
-}
-
-.online-dot {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 10px;
-  height: 10px;
-  background: #2ecc71;
-  border: 2px solid white;
-  border-radius: 50%;
-}
-
 .chat-btn {
-  background: rgba(0,0,0,0.05);
+  background: var(--item-hover-bg);
   border: none;
   padding: 5px 12px;
   border-radius: 5px;
@@ -455,7 +488,7 @@ header {
   color: var(--color-black);
 }
 
-/* Navigation Drawer */
+/* Slide-out Navigation Drawer */
 .nav-drawer {
   position: fixed;
   top: 0;
@@ -488,7 +521,7 @@ header {
   color: var(--text-color);
 }
 
-/* Chat Popup */
+/* Floating Chat Popup */
 .chat-popup {
   position: fixed;
   bottom: 0;
@@ -537,7 +570,7 @@ header {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(0,0,0,0.02);
+  background: var(--item-hover-bg);
 }
 
 .chat-msg {
@@ -547,7 +580,7 @@ header {
 }
 
 .chat-msg.system {
-  background: rgba(0,0,0,0.05);
+  background: var(--item-hover-bg);
   color: var(--text-color);
   align-self: center;
   font-size: 11px;
@@ -562,7 +595,7 @@ header {
 .chat-input-row {
   display: flex;
   align-items: center;
-  border-top: 1px solid rgba(0,0,0,0.1);
+  border-top: 1px solid var(--border-color);
   padding: 5px 10px;
   gap: 8px;
 }
@@ -592,7 +625,7 @@ header {
   cursor: pointer;
 }
 
-/* Toast Notification */
+/* Floating Toast Box */
 .floating-toast {
   position: fixed;
   bottom: 20px;
@@ -614,7 +647,7 @@ header {
   color: #aaa;
 }
 
-/* Floating Action Buttons Layout */
+/* FAB Floating Quick Action Buttons */
 .fab-btn {
   position: fixed;
   bottom: 20px;
@@ -638,7 +671,7 @@ header {
 
 .back-to-top-btn {
   position: fixed;
-  bottom: 80px; /* Positions button nicely above FAB */
+  bottom: 80px;
   right: 20px;
   width: 45px;
   height: 45px;
@@ -659,9 +692,10 @@ header {
   transform: scale(1.05);
 }
 
-/* Logo Styling */
+/* Logo Image Specifications */
 .auth-logo-img {
   max-width: 200px;
+  width: 100%;
   height: auto;
   display: block;
   margin: 0 auto 10px auto;
@@ -669,7 +703,37 @@ header {
 
 .header-logo-img {
   height: 60px;
+  max-height: 50px;
   width: auto;
+  max-width: 100%;
   display: block;
   object-fit: contain;
+}
+
+/* Mobile & Tablet Media Queries */
+@media (max-width: 900px) {
+  .container {
+    grid-template-columns: 1fr;
+  }
+  .sidebar-desktop, .sidebar-right {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  header {
+    padding: 10px 15px;
+  }
+
+  .chat-popup {
+    width: calc(100% - 20px);
+    right: 10px;
+    left: 10px;
+  }
+
+  .floating-toast {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+  }
 }

@@ -12,6 +12,7 @@
   <div class="ambient-blob blob-1"></div>
   <div class="ambient-blob blob-2"></div>
 
+  <!-- AUTHENTICATION SCREEN -->
   <div class="auth-screen" id="authScreen">
     <div class="auth-card">
       <div class="auth-branding">
@@ -38,11 +39,15 @@
         <div class="input-group">
           <input type="password" id="pageAuthPassword" placeholder="Password" required />
         </div>
+        <div style="text-align: right; margin-top: -5px; margin-bottom: 15px;">
+          <button type="button" id="forgotPasswordBtn" style="background: none; border: none; color: var(--color-red); font-size: 12px; cursor: pointer; text-decoration: underline;">Forgot Password?</button>
+        </div>
         <button type="submit" class="auth-submit-btn" id="pageAuthSubmitBtn">Log In</button>
       </form>
     </div>
   </div>
 
+  <!-- MAIN APP CONTENT (HIDDEN BY DEFAULT UNTIL LOGIN) -->
   <div id="appContent" class="hidden">
 
     <div class="floating-toast" id="toastNotice">
@@ -62,14 +67,14 @@
       </div>
       <div class="drawer-menu">
         <div class="user-profile drawer-user-info" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
-          <div class="avatar profile-avatar" style="background: var(--color-red);">SY</div>
+          <div class="avatar profile-avatar online">SY</div>
           <div class="profile-details">
             <span class="profile-name">User</span>
             <span class="profile-email">user@example.com</span>
           </div>
         </div>
         <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
-        <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge">3</span></a>
+        <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge notif-badge">0</span></a>
         <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
         <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
         <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
@@ -93,7 +98,7 @@
             <div class="profile-details" style="text-align: right;">
               <span class="profile-name">User</span>
             </div>
-            <div class="avatar profile-avatar" style="background: var(--color-red);">SY</div>
+            <div class="avatar profile-avatar online">SY</div>
           </div>
           <button class="signup-btn">Sign Up / Log In</button>
         </div>
@@ -113,7 +118,7 @@
         <div class="card drawer-menu">
           <div class="animated-stripe-bar"></div>
           <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
-          <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge">3</span></a>
+          <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge notif-badge">0</span></a>
           <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
           <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
           <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
@@ -155,9 +160,9 @@
             <div class="animated-stripe-bar"></div>
             <h3>Recent Conversations</h3>
             
-            <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('John O.')">
+            <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('user_john_o', 'John O.')">
               <div class="friend-user">
-                <div class="avatar-wrapper">
+                <div class="avatar-wrapper online">
                   <div class="avatar">JO</div>
                   <div class="online-dot"></div>
                 </div>
@@ -169,9 +174,9 @@
               <span style="font-size: 11px; opacity: 0.5;">10m ago</span>
             </div>
 
-            <div class="friend-item" style="cursor: pointer; padding: 10px 0;" onclick="openChatFromTab('Emmanuel A.')">
+            <div class="friend-item" style="cursor: pointer; padding: 10px 0;" onclick="openChatFromTab('user_emmanuel_a', 'Emmanuel A.')">
               <div class="friend-user">
-                <div class="avatar-wrapper">
+                <div class="avatar-wrapper online">
                   <div class="avatar">EA</div>
                   <div class="online-dot"></div>
                 </div>
@@ -192,7 +197,7 @@
             
             <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
               <div class="friend-user">
-                <div class="avatar-wrapper">
+                <div class="avatar-wrapper online">
                   <div class="avatar">JO</div>
                   <div class="online-dot"></div>
                 </div>
@@ -201,12 +206,12 @@
                   <span style="display: block; font-size: 12px; opacity: 0.7;">Software Developer • Soroti</span>
                 </div>
               </div>
-              <button class="chat-btn" onclick="openChatFromTab('John O.')"><i class="fa-solid fa-message"></i> Message</button>
+              <button class="chat-btn" onclick="openChatFromTab('user_john_o', 'John O.')"><i class="fa-solid fa-message"></i> Message</button>
             </div>
 
             <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
               <div class="friend-user">
-                <div class="avatar-wrapper">
+                <div class="avatar-wrapper online">
                   <div class="avatar">EA</div>
                   <div class="online-dot"></div>
                 </div>
@@ -215,7 +220,7 @@
                   <span style="display: block; font-size: 12px; opacity: 0.7;">Community Organizer • Soroti</span>
                 </div>
               </div>
-              <button class="chat-btn" onclick="openChatFromTab('Emmanuel A.')"><i class="fa-solid fa-message"></i> Message</button>
+              <button class="chat-btn" onclick="openChatFromTab('user_emmanuel_a', 'Emmanuel A.')"><i class="fa-solid fa-message"></i> Message</button>
             </div>
 
             <div class="friend-item">
@@ -228,7 +233,7 @@
                   <span style="display: block; font-size: 12px; opacity: 0.7;">Student • Soroti University</span>
                 </div>
               </div>
-              <button class="chat-btn" onclick="openChatFromTab('Sarah A.')"><i class="fa-solid fa-message"></i> Message</button>
+              <button class="chat-btn" onclick="openChatFromTab('user_sarah_a', 'Sarah A.')"><i class="fa-solid fa-message"></i> Message</button>
             </div>
           </div>
         </div>
@@ -236,21 +241,13 @@
         <div id="notificationsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
-            <h3>Notifications</h3>
-            <div id="notificationsContainer" style="margin-top: 10px;">
-              <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
-                <span><i class="fa-solid fa-fire" style="color: var(--color-red);"></i> <strong>Live Update:</strong> Youth Leadership event starts at 3 PM!</span>
-                <span style="font-size: 11px; opacity: 0.5;">2h ago</span>
-              </div>
-              <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
-                <span><i class="fa-solid fa-heart" style="color: var(--color-red);"></i> <strong>John O.</strong> liked your post.</span>
-                <span style="font-size: 11px; opacity: 0.5;">5h ago</span>
-              </div>
-              <div class="friend-item" style="padding: 10px 0;">
-                <span><i class="fa-solid fa-comment" style="color: var(--color-yellow);"></i> <strong>Emmanuel A.</strong> commented on your update.</span>
-                <span style="font-size: 11px; opacity: 0.5;">1d ago</span>
-              </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+              <h3 style="margin: 0;">Notifications</h3>
+              <button id="markAllReadBtn" style="background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 12px; font-weight: bold;">
+                <i class="fa-solid fa-check-double"></i> Mark All as Read
+              </button>
             </div>
+            <div id="notificationsContainer" style="margin-top: 10px;"></div>
           </div>
         </div>
 
@@ -260,7 +257,7 @@
             <h3>Account Settings</h3>
             
             <div style="display: flex; align-items: center; gap: 15px; margin: 15px 0;">
-              <div class="avatar profile-avatar" id="settingsAvatarPreview" style="width: 50px; height: 50px; font-size: 16px;">SY</div>
+              <div class="avatar profile-avatar online" id="settingsAvatarPreview" style="width: 50px; height: 50px; font-size: 16px;">SY</div>
               <div>
                 <label class="attach-label" style="display: inline-block; cursor: pointer;">
                   <i class="fa-solid fa-camera"></i> Change Photo
@@ -277,8 +274,16 @@
               </div>
               <div class="input-group">
                 <label style="font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px;">Email Address</label>
-                <input type="email" id="settingsEmailInput" placeholder="Update Email" />
+                <input type="email" id="settingsEmailInput" placeholder="Update Email" disabled style="opacity: 0.6; cursor: not-allowed;" />
               </div>
+
+              <div style="margin: 20px 0; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                <h4 style="font-size: 14px; margin-bottom: 10px;">Notifications Preferences</h4>
+                <button type="button" id="enablePushBtn" style="padding: 8px 12px; background: var(--item-hover-bg); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: bold; color: var(--text-color);">
+                  <i class="fa-solid fa-bell"></i> Enable Browser Desktop Alerts
+                </button>
+              </div>
+
               <button type="button" id="saveSettingsBtn" class="post-btn" style="width: 100%;">Save Changes</button>
             </form>
           </div>
@@ -293,30 +298,31 @@
           
           <div class="friend-item">
             <div class="friend-user">
-              <div class="avatar-wrapper">
+              <div class="avatar-wrapper online">
                 <div class="avatar">JO</div>
                 <div class="online-dot"></div>
               </div>
               <span>John O.</span>
             </div>
-            <button class="chat-btn" data-name="John O."><i class="fa-solid fa-comment"></i> Chat</button>
+            <button class="chat-btn" data-uid="user_john_o" data-name="John O."><i class="fa-solid fa-comment"></i> Chat</button>
           </div>
-
+            
           <div class="friend-item">
             <div class="friend-user">
-              <div class="avatar-wrapper">
+              <div class="avatar-wrapper online">
                 <div class="avatar">EA</div>
                 <div class="online-dot"></div>
               </div>
               <span>Emmanuel A.</span>
             </div>
-            <button class="chat-btn" data-name="Emmanuel A."><i class="fa-solid fa-comment"></i> Chat</button>
+            <button class="chat-btn" data-uid="user_emmanuel_a" data-name="Emmanuel A."><i class="fa-solid fa-comment"></i> Chat</button>
           </div>
         </div>
       </div>
 
     </div>
 
+    <!-- CHAT POPUP WINDOW -->
     <div class="chat-popup hidden" id="chatPopup">
       <div class="chat-header">
         <span id="chatFriendName">Chat</span>
@@ -340,6 +346,6 @@
 
   </div>
 
-  <script src="script.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>

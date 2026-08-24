@@ -1,8 +1,246 @@
+// 1. MODULE IMPORTS
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged, 
+  updateProfile,
+  sendSignInLinkToEmail,
+  sendPasswordResetEmail
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { 
+  getDatabase, 
+  ref, 
+  push, 
+  onValue, 
+  update, 
+  remove, 
+  set, 
+  get 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { 
+  getStorage, 
+  ref as storageRef, 
+  uploadBytes, 
+  getDownloadURL 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+// 2. FIREBASE CONFIG & INITIALIZATION
+const firebaseConfig = {
+  apiKey: "AIzaSyA0BCPLt-9TvXtmPLCRq6Y45AijoUnkB48", 
+  authDomain: "soroti-youth-forum.firebaseapp.com",
+  projectId: "soroti-youth-forum",
+  storageBucket: "soroti-youth-forum.firebasestorage.app",
+  messagingSenderId: "1005832853294",
+  appId: "1:1005832853294:web:bf61ea5749abf833688cbf",
+  measurementId: "G-CHRVZQV6H6"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const database = getDatabase(app);
+const storage = getStorage(app);
+
+// 3. GLOBAL STATE
+let postsList = [];
+let currentUser = null;
+let activeChatRoom = null;
+let activeChatListener = null;
+let notifListener = null;
+
+let currentPostFile = null;
+let currentChatFile = null;
+
+// 4. HELPER FUNCTIONS
+async function uploadMediaFile(file, folderPath) {
+  if (!file) return null;
+  try {
+    const fileReference = storageRef(storage, `${folderPath}/${Date.now()}_${file.name}`);
+    const snapshot = await uploadBytes(fileReference, file);
+    return await getDownloadURL(snapshot.ref);
+  } catch (error) {
+    console.warn("Storage upload warning (Cloud Storage may not be enabled yet):", error);
+    showToast("Cloud Storage disabled or unconfigured. Proceeding without attachment.");
+    return null;
+  }
+}
+
+function getInitials(name) {
+  return name ? name.split(' ').map(p => p[0]).join('').toUpperCase().substring(0, 2) : 'SY';
+}
+
+function escapeHTML(str) {
+  return str ? str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)) : '';
+}
+
+export async function sendNotification(targetUid, title, message, icon = 'fa-bell') {
+  if (!targetUid) return;
+  try {
+    const notifRef = ref(database, `notifications/${targetUid}`);
+    await push(notifRef, {
+      title: title,
+      message: message,
+      icon: icon,
+      read: false,
+      createdAt: Date.now(),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+  } catch (err) {
+    console.warn("Could not dispatch notification:", err);
+  }
+}
+
+function triggerDesktopPush(title, body) {
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body, icon: "logo.png" });
+  }
+}
+
+// 5. GLOBAL WINDOW HANDLERS
+export async function sendEmailAuthLink(email) {
+  const actionCodeSettings = {
+    url: 'https://soroti-youth-forum.firebaseapp.com/finishSignUp',
+    handleCodeInApp: true,
+    linkDomain: 'soroti-youth-forum.firebaseapp.com'
+  };
+
+  try {
+    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+    window.localStorage.setItem('emailForSignIn', email);
+  } catch (error) {
+    console.error("Error sending auth email link:", error);
+    throw error;
+  }
+}
+
+window.toggleLike = async function(id) {
+  if (!currentUser) return;
+  const postRef = ref(database, `posts/${id}`);
+  const snapshot = await get(postRef);
+
+  if (snapshot.exists()) {
+    const post = snapshot.val();
+    const likeRef = ref(database, `posts/${id}/likes/${currentUser.uid}`);
+    const likeSnap = await get(likeRef);
+
+    if (likeSnap.exists()) {
+      await remove(likeRef);
+    } else {
+      await set(likeRef, true);
+      if (post.uid && post.uid !== currentUser.uid) {
+        sendNotification(post.uid, currentUser.name, 'liked your post.', 'fa-heart');
+      }
+    }
+  }
+};
+
+window.toggleDislike = async function(id) {
+  if (!currentUser) return;
+  const dislikeRef = ref(database, `posts/${id}/dislikes/${currentUser.uid}`);
+  const snapshot = await get(dislikeRef);
+  if (snapshot.exists()) {
+    await remove(dislikeRef);
+  } else {
+    await set(dislikeRef, true);
+  }
+};
+
+window.toggleCommentSection = function(id) {
+  const section = document.getElementById(`commentSection-${id}`);
+  if (section) section.classList.toggle('hidden');
+};
+
+window.addComment = async function(id) {
+  const input = document.getElementById(`commentInput-${id}`);
+  if (!input || !input.value.trim()) return;
+
+  const postRef = ref(database, `posts/${id}`);
+  const snapshot = await get(postRef);
+
+  if (snapshot.exists()) {
+    const post = snapshot.val();
+    const commentsRef = ref(database, `posts/${id}/comments`);
+    
+    await push(commentsRef, {
+      author: currentUser ? currentUser.name : 'Anonymous',
+      text: input.value.trim(),
+      createdAt: Date.now()
+    });
+
+    if (post.uid && currentUser && post.uid !== currentUser.uid) {
+      sendNotification(post.uid, currentUser.name, 'commented on your post.', 'fa-comment');
+    }
+  }
+
+  input.value = '';
+};
+
+window.deletePost = async function(id) {
+  if (confirm('Are you sure you want to delete this post?')) {
+    await remove(ref(database, `posts/${id}`));
+  }
+};
+
+window.openChat = function(recipientUid, recipientName) {
+  if (!currentUser) {
+    showToast('Please log in to chat.');
+    return;
+  }
+
+  const chatPopup = document.getElementById('chatPopup');
+  const chatFriendName = document.getElementById('chatFriendName');
+  const chatMessages = document.getElementById('chatMessages');
+  if (!chatPopup) return;
+
+  chatFriendName.textContent = `Chat with ${recipientName || 'User'}`;
+  chatPopup.classList.remove('hidden');
+
+  const roomPath = recipientUid ? [currentUser.uid, recipientUid].sort().join('_') : 'global_room';
+  activeChatRoom = `direct_${roomPath}`;
+
+  if (activeChatListener) activeChatListener();
+
+  chatMessages.innerHTML = `<div class="chat-msg system">Connecting to conversation...</div>`;
+
+  activeChatListener = onValue(ref(database, `chats/${activeChatRoom}`), (snapshot) => {
+    const data = snapshot.val();
+    chatMessages.innerHTML = `<div class="chat-msg system">Private Chat - ${escapeHTML(recipientName || 'Group')}</div>`;
+    if (data) {
+      Object.values(data).forEach(msg => {
+        const msgEl = document.createElement('div');
+        const isMe = msg.senderUid === currentUser.uid;
+        msgEl.className = isMe ? 'chat-msg outgoing' : 'chat-msg system';
+        
+        let html = `<div>${escapeHTML(msg.text || '')}</div>`;
+        if (msg.attachment) {
+          html += `<div style="margin-top: 5px;"><img src="${msg.attachment}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
+        }
+        msgEl.innerHTML = html;
+        chatMessages.appendChild(msgEl);
+      });
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+  });
+};
+
+window.openChatFromTab = function(friendUid, friendName) {
+  window.openChat(friendUid, friendName);
+};
+
+function showToast(message) {
+  const toastNotice = document.getElementById('toastNotice');
+  if (!toastNotice) return;
+  toastNotice.querySelector('span').innerHTML = message;
+  toastNotice.style.display = 'flex';
+  setTimeout(() => { toastNotice.style.display = 'none'; }, 4000);
+}
+
+// 6. DOM CONTROLLER
 document.addEventListener('DOMContentLoaded', () => {
 
-  // --- Dark Mode Initialization & Persistence ---
   const themeToggleBtn = document.getElementById('themeToggleBtn');
-  
   const savedTheme = localStorage.getItem('theme');
   const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   
@@ -14,44 +252,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (themeToggleBtn) {
     themeToggleBtn.addEventListener('click', () => {
       document.body.classList.toggle('dark-theme');
-      
       const isDark = document.body.classList.contains('dark-theme');
       localStorage.setItem('theme', isDark ? 'dark' : 'light');
       themeToggleBtn.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
     });
   }
 
-  const DEFAULT_POSTS = [
-    {
-      id: 1,
-      author: 'Emmanuel A.',
-      initials: 'EA',
-      time: '2 hours ago',
-      content: 'Excited for the upcoming Soroti Youth Innovation Hub workshop this Saturday!',
-      attachment: null,
-      attachmentType: null,
-      likes: 12,
-      liked: false,
-      dislikes: 1,
-      disliked: false,
-      comments: [
-        { author: 'John O.', text: 'See you there!' }
-      ]
-    }
-  ];
-
-  let posts = JSON.parse(localStorage.getItem('soroti_forum_posts')) || DEFAULT_POSTS;
-  let currentUser = JSON.parse(localStorage.getItem('soroti_forum_user')) || null;
   let isSignUpMode = false;
-  let uploadedAvatarData = null;
-
-  // Global variables to store temporary base64 image data for previews
-  let currentPostAttachmentData = null;
-  let currentPostAttachmentType = null;
-  let currentPostAttachmentName = null;
-
-  let currentChatAttachmentData = null;
-  let currentChatAttachmentName = null;
+  let uploadedAvatarFile = null;
 
   const elements = {
     authScreen: document.getElementById('authScreen'),
@@ -65,6 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pageAuthPassword: document.getElementById('pageAuthPassword'),
     pageAuthSubmitBtn: document.getElementById('pageAuthSubmitBtn'),
     authErrorMsg: document.getElementById('authErrorMsg'),
+    forgotPasswordBtn: document.getElementById('forgotPasswordBtn'),
 
     navDrawer: document.getElementById('navDrawer'),
     navBtns: document.querySelectorAll('.nav-btn'),
@@ -108,11 +317,121 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function init() {
     setupPreviewContainers();
-    updateAuthView();
     bindEvents();
+    listenToAuthState();
+    listenToPosts();
   }
 
-  // Inject preview elements dynamically into the post form and chat box
+  function listenToAuthState() {
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        let userData = {};
+        try {
+          const userSnapshot = await get(ref(database, `users/${user.uid}`));
+          if (userSnapshot.exists()) {
+            userData = userSnapshot.val();
+          }
+        } catch (err) {
+          console.warn("Could not load user profile data from Realtime Database:", err);
+        }
+
+        currentUser = {
+          uid: user.uid,
+          name: userData.displayName || user.displayName || user.email.split('@')[0],
+          email: user.email,
+          avatarUrl: userData.avatarUrl || user.photoURL || null
+        };
+        updateAuthView(true);
+        listenToNotifications();
+      } else {
+        currentUser = null;
+        if (notifListener) notifListener();
+        updateAuthView(false);
+      }
+    });
+  }
+
+  function listenToNotifications() {
+    if (!currentUser) return;
+    const notifRef = ref(database, `notifications/${currentUser.uid}`);
+    
+    if (notifListener) notifListener();
+
+    notifListener = onValue(notifRef, (snapshot) => {
+      const data = snapshot.val();
+      const notifList = [];
+      if (data) {
+        Object.keys(data).forEach(key => {
+          notifList.push({ id: key, ...data[key] });
+        });
+        notifList.sort((a, b) => b.createdAt - a.createdAt);
+      }
+      renderNotifications(notifList);
+    });
+  }
+
+  function renderNotifications(notifications) {
+    const container = document.getElementById('notificationsContainer');
+    const badgeEls = document.querySelectorAll('.notif-badge');
+    
+    const unreadCount = notifications.filter(n => !n.read).length;
+    badgeEls.forEach(b => {
+      b.textContent = unreadCount;
+      b.style.display = unreadCount > 0 ? 'inline-block' : 'none';
+    });
+
+    if (!container) return;
+
+    if (notifications.length === 0) {
+      container.innerHTML = `
+        <div style="padding: 20px; text-align: center; color: #888; font-size: 13px;">
+          No notifications yet. You're all caught up!
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = notifications.map(notif => `
+      <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05); ${notif.read ? 'opacity: 0.6;' : 'font-weight: 600;'}">
+        <span>
+          <i class="fa-solid ${notif.icon || 'fa-bell'}" style="color: var(--color-red); margin-right: 6px;"></i> 
+          <strong>${escapeHTML(notif.title)}</strong> ${escapeHTML(notif.message)}
+        </span>
+        <span style="font-size: 11px; opacity: 0.5;">${notif.time || 'Recently'}</span>
+      </div>
+    `).join('');
+  }
+
+  async function markAllNotificationsRead() {
+    if (!currentUser) return;
+    const notifRef = ref(database, `notifications/${currentUser.uid}`);
+    const snapshot = await get(notifRef);
+    if (snapshot.exists()) {
+      const updates = {};
+      Object.keys(snapshot.val()).forEach(key => {
+        updates[`${key}/read`] = true;
+      });
+      await update(notifRef, updates);
+      showToast('All notifications marked as read.');
+    }
+  }
+
+  function listenToPosts() {
+    const postsRef = ref(database, 'posts');
+    onValue(postsRef, (snapshot) => {
+      const data = snapshot.val();
+      postsList = [];
+      if (data) {
+        Object.keys(data).forEach((key) => {
+          postsList.push({ id: key, ...data[key] });
+        });
+        postsList.sort((a, b) => b.createdAt - a.createdAt);
+      }
+      renderFeed(getCurrentSearchQuery());
+    }, (error) => {
+      console.warn("Realtime database error reading posts:", error);
+    });
+  }
+
   function setupPreviewContainers() {
     if (elements.postBox) {
       const previewDiv = document.createElement('div');
@@ -146,18 +465,23 @@ document.addEventListener('DOMContentLoaded', () => {
     return elements.searchInput ? elements.searchInput.value.trim() : '';
   }
 
-  function updateAuthView() {
-    if (currentUser) {
-      if (elements.authScreen) elements.authScreen.classList.add('hidden');
-      if (elements.appContent) elements.appContent.classList.remove('hidden');
+  function updateAuthView(isLoggedIn) {
+    if (isLoggedIn && currentUser) {
+      if (elements.authScreen) elements.authScreen.style.display = 'none';
+      if (elements.appContent) {
+        elements.appContent.style.display = 'block';
+        elements.appContent.classList.remove('hidden');
+      }
       if (elements.signupBtn) elements.signupBtn.classList.add('hidden');
       elements.logoutBtns.forEach(btn => btn.classList.remove('hidden'));
       document.querySelectorAll('.user-profile').forEach(el => el.classList.remove('hidden'));
       updateUserUI();
-      renderFeed();
     } else {
-      if (elements.authScreen) elements.authScreen.classList.remove('hidden');
-      if (elements.appContent) elements.appContent.classList.add('hidden');
+      if (elements.authScreen) elements.authScreen.style.display = 'flex';
+      if (elements.appContent) {
+        elements.appContent.style.display = 'none';
+        elements.appContent.classList.add('hidden');
+      }
       if (elements.signupBtn) elements.signupBtn.classList.remove('hidden');
       elements.logoutBtns.forEach(btn => btn.classList.add('hidden'));
       document.querySelectorAll('.user-profile').forEach(el => el.classList.add('hidden'));
@@ -181,42 +505,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function handleAuthSubmit(e) {
+  async function handleAuthSubmit(e) {
     e.preventDefault();
+    const isSignUp = elements.tabSignupBtn?.classList.contains('active');
+    
     const email = elements.pageAuthEmail.value.trim();
     const password = elements.pageAuthPassword.value.trim();
     const name = elements.pageAuthName ? elements.pageAuthName.value.trim() : '';
 
-    if (!email || !password || (isSignUpMode && !name)) {
+    if (!email || !password || (isSignUp && !name)) {
       if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please fill in all required fields.';
       return;
     }
 
-    if (password.length < 6) {
-      if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Password must be at least 6 characters.';
-      return;
+    try {
+      if (isSignUp) {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        await updateProfile(user, { displayName: name });
+        try {
+          await set(ref(database, `users/${user.uid}`), { displayName: name, email: email, uid: user.uid });
+        } catch (dbErr) {
+          console.warn("Database user set warning:", dbErr);
+        }
+        showToast(`Welcome to Soroti Youth Forum, ${name}!`);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        showToast(`Welcome back!`);
+      }
+      elements.pageAuthEmail.value = '';
+      elements.pageAuthPassword.value = '';
+      if (elements.pageAuthName) elements.pageAuthName.value = '';
+    } catch (error) {
+      if (elements.authErrorMsg) {
+        if (error.code === 'auth/invalid-credential') {
+          elements.authErrorMsg.textContent = 'Incorrect email or password. If you do not have an account, click Sign Up.';
+        } else if (error.code === 'auth/user-not-found') {
+          elements.authErrorMsg.textContent = 'No account found with this email. Click Sign Up above to register.';
+        } else if (error.code === 'auth/wrong-password') {
+          elements.authErrorMsg.textContent = 'Incorrect password.';
+        } else {
+          elements.authErrorMsg.textContent = error.message.replace('Firebase: ', '');
+        }
+      }
     }
-
-    currentUser = {
-      name: isSignUpMode ? name : email.split('@')[0],
-      email: email,
-      avatarUrl: null
-    };
-
-    localStorage.setItem('soroti_forum_user', JSON.stringify(currentUser));
-    updateAuthView();
-    showToast(`Welcome back, ${currentUser.name}!`);
-
-    elements.pageAuthEmail.value = '';
-    elements.pageAuthPassword.value = '';
-    if (elements.pageAuthName) elements.pageAuthName.value = '';
   }
 
-  function handleLogout() {
+  async function handleLogout() {
     if (confirm('Are you sure you want to log out?')) {
-      localStorage.removeItem('soroti_forum_user');
-      currentUser = null;
-      updateAuthView();
+      await signOut(auth);
     }
   }
 
@@ -227,7 +564,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     elements.profileAvatars.forEach(el => {
       if (currentUser.avatarUrl) {
-        el.style.backgroundImage = `url(${currentUser.avatarUrl})`;
+        el.style.backgroundImage = `url("${currentUser.avatarUrl}")`;
         el.style.backgroundSize = 'cover';
         el.style.backgroundPosition = 'center';
         el.textContent = '';
@@ -237,19 +574,32 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
+    const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
+    if (settingsAvatarPreview) {
+      if (currentUser.avatarUrl) {
+        settingsAvatarPreview.style.backgroundImage = `url("${currentUser.avatarUrl}")`;
+        settingsAvatarPreview.style.backgroundSize = 'cover';
+        settingsAvatarPreview.style.backgroundPosition = 'center';
+        settingsAvatarPreview.textContent = '';
+      } else {
+        settingsAvatarPreview.style.backgroundImage = 'none';
+        settingsAvatarPreview.textContent = getInitials(currentUser.name);
+      }
+    }
+
     const nameInput = document.getElementById('settingsNameInput');
     const emailInput = document.getElementById('settingsEmailInput');
     if (nameInput) nameInput.value = currentUser.name;
     if (emailInput) emailInput.value = currentUser.email;
   }
 
-    function renderFeed(filterQuery = '') {
+  function renderFeed(filterQuery = '') {
     if (!elements.feedContainer) return;
 
-    let displayPosts = posts;
+    let displayPosts = postsList;
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
-      displayPosts = posts.filter(p => p.content.toLowerCase().includes(q) || p.author.toLowerCase().includes(q));
+      displayPosts = postsList.filter(p => (p.content && p.content.toLowerCase().includes(q)) || (p.author && p.author.toLowerCase().includes(q)));
     }
 
     if (displayPosts.length === 0) {
@@ -262,104 +612,124 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    elements.feedContainer.innerHTML = displayPosts.map(post => `
-      <div class="card post-card" data-id="${post.id}">
-        <div class="animated-stripe-bar"></div>
-        
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <div class="friend-user">
-            <div class="avatar-wrapper"><div class="avatar">${post.initials}</div></div>
-            <div>
-              <strong style="font-size: 14px; display: block;">${escapeHTML(post.author)}</strong>
-              <span style="font-size: 11px; color: #888;">${post.time}</span>
+    elements.feedContainer.innerHTML = displayPosts.map(post => {
+      const isImage = post.attachmentType === 'image';
+      const isOwner = currentUser && (currentUser.uid === post.uid || currentUser.email === post.authorEmail);
+      
+      const likesCount = post.likes ? Object.keys(post.likes).length : 0;
+      const isLiked = post.likes && currentUser && post.likes[currentUser.uid];
+
+      const dislikesCount = post.dislikes ? Object.keys(post.dislikes).length : 0;
+      const isDisliked = post.dislikes && currentUser && post.dislikes[currentUser.uid];
+
+      const commentsArray = post.comments ? Object.values(post.comments) : [];
+
+      return `
+        <div class="card post-card" data-id="${post.id}">
+          <div class="animated-stripe-bar"></div>
+          
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div class="friend-user">
+              <div class="avatar-wrapper"><div class="avatar">${post.initials || 'SY'}</div></div>
+              <div>
+                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Anonymous')}</strong>
+                <span style="font-size: 11px; color: #888;">${post.time || 'Recently'}</span>
+              </div>
+            </div>
+            
+            ${isOwner ? `
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button onclick="deletePost('${post.id}')" style="background: none; border: none; color: #e50914; cursor: pointer; font-size: 14px;" title="Delete Post">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            ` : ''}
+          </div>
+          
+          ${post.content ? `<p id="postContent-${post.id}" style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>` : ''}
+          
+          ${post.attachment ? (
+            isImage ? 
+              `<div style="margin-bottom: 12px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); background: #000;">
+                <img src="${post.attachment}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
+               </div>` : 
+              `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
+                <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${post.attachment}" target="_blank" style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
+               </div>`
+          ) : ''}
+          
+          <div style="display: flex; gap: 15px; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 10px; font-size: 13px; align-items: center;">
+            <button onclick="toggleLike('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${isLiked ? '#e50914' : 'inherit'};">
+              ${isLiked ? '<i class="fa-solid fa-heart"></i>' : '<i class="fa-regular fa-heart"></i>'} ${likesCount}
+            </button>
+            <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${isDisliked ? '#e50914' : 'inherit'};">
+              ${isDisliked ? '<i class="fa-solid fa-thumbs-down"></i>' : '<i class="fa-regular fa-thumbs-down"></i>'} ${dislikesCount}
+            </button>
+            <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: inherit;">
+              <i class="fa-solid fa-comment"></i> Comment (${commentsArray.length})
+            </button>
+          </div>
+
+          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 8px;">
+            <div style="max-height: 120px; overflow-y: auto; margin-bottom: 8px;">
+              ${commentsArray.map(c => `
+                <div style="font-size: 12px; background: rgba(0,0,0,0.03); padding: 5px 8px; border-radius: 4px; margin-bottom: 4px;">
+                  <strong>${escapeHTML(c.author)}:</strong> ${escapeHTML(c.text)}
+                </div>
+              `).join('')}
+            </div>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex:1; padding: 6px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; outline: none; background: transparent; color: var(--text-color);" />
+              <button onclick="addComment('${post.id}')" style="padding: 6px 10px; background: var(--color-black); color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer;"><i class="fa-solid fa-paper-plane"></i></button>
             </div>
           </div>
-          <button onclick="deletePost(${post.id})" style="background: none; border: none; color: #999; cursor: pointer;"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        
-        ${post.content ? `<p style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>` : ''}
-        
-        <!-- DISPLAY ATTACHMENT / IMAGE HERE -->
-        ${post.attachment ? (
-          (post.attachmentType === 'image' || post.attachment.startsWith('data:image')) ? 
-            `<div style="margin-bottom: 12px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1);">
-              <img src="${post.attachment}" alt="Post Image" style="width: 100%; max-height: 380px; object-fit: cover; display: block;" />
-             </div>` : 
-            `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
-              <i class="fa-solid fa-paperclip"></i> Attached File: <strong>${escapeHTML(post.attachmentName || post.attachment)}</strong>
-             </div>`
-        ) : ''}
-        
-        <div style="display: flex; gap: 15px; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 10px; font-size: 13px; align-items: center;">
-          <button onclick="toggleLike(${post.id})" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${post.liked ? '#e50914' : 'inherit'};">
-            ${post.liked ? '<i class="fa-solid fa-heart"></i>' : '<i class="fa-regular fa-heart"></i>'} ${post.likes}
-          </button>
-          <button onclick="toggleDislike(${post.id})" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${post.disliked ? '#e50914' : 'inherit'};">
-            ${post.disliked ? '<i class="fa-solid fa-thumbs-down"></i>' : '<i class="fa-regular fa-thumbs-down"></i>'} ${post.dislikes || 0}
-          </button>
-          <button onclick="toggleCommentSection(${post.id})" style="background: none; border: none; cursor: pointer; font-weight: bold; color: inherit;">
-            <i class="fa-solid fa-comment"></i> Comment (${post.comments ? post.comments.length : 0})
-          </button>
-        </div>
 
-        <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 8px;">
-          <div style="max-height: 120px; overflow-y: auto; margin-bottom: 8px;">
-            ${(post.comments || []).map(c => `
-              <div style="font-size: 12px; background: rgba(0,0,0,0.03); padding: 5px 8px; border-radius: 4px; margin-bottom: 4px;">
-                <strong>${escapeHTML(c.author)}:</strong> ${escapeHTML(c.text)}
-              </div>
-            `).join('')}
-          </div>
-          <div style="display: flex; gap: 5px;">
-            <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex:1; padding: 6px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; outline: none; background: transparent; color: var(--text-color);" />
-            <button onclick="addComment(${post.id})" style="padding: 6px 10px; background: var(--color-black); color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer;"><i class="fa-solid fa-paper-plane"></i></button>
-          </div>
         </div>
-
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
-
-  function handleCreatePost() {
+  async function handleCreatePost() {
     const content = elements.postText.value.trim();
+    if (!content && !currentPostFile) return;
 
-    if (!content && !currentPostAttachmentData) return;
+    let attachmentUrl = null;
+    let attachmentType = null;
+
+    if (currentPostFile) {
+      showToast('Uploading attachment...');
+      attachmentUrl = await uploadMediaFile(currentPostFile, 'post_attachments');
+      attachmentType = currentPostFile.type.startsWith('image/') ? 'image' : 'file';
+    }
 
     const newPost = {
-      id: Date.now(),
+      uid: currentUser ? currentUser.uid : null,
       author: currentUser ? currentUser.name : 'Anonymous',
+      authorEmail: currentUser ? currentUser.email : null,
       initials: getInitials(currentUser ? currentUser.name : 'AN'),
-      time: 'Just now',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: Date.now(),
       content: content,
-      attachment: currentPostAttachmentData,
-      attachmentType: currentPostAttachmentType,
-      attachmentName: currentPostAttachmentName,
-      likes: 0,
-      liked: false,
-      dislikes: 0,
-      disliked: false,
-      comments: []
+      attachment: attachmentUrl,
+      attachmentType: attachmentType,
+      attachmentName: currentPostFile ? currentPostFile.name : null,
+      likes: {},
+      dislikes: {},
+      comments: {}
     };
 
-    posts.unshift(newPost);
-    localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed();
+    await push(ref(database, 'posts'), newPost);
 
-    // Reset post form and previews
     elements.postText.value = '';
-    elements.postPhotoInput.value = '';
-    elements.postFileInput.value = '';
+    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
+    if (elements.postFileInput) elements.postFileInput.value = '';
     clearPostPreview();
 
     showToast('Post published successfully!');
   }
 
   function clearPostPreview() {
-    currentPostAttachmentData = null;
-    currentPostAttachmentType = null;
-    currentPostAttachmentName = null;
-    
+    currentPostFile = null;
     const container = document.getElementById('postPreviewContainer');
     const img = document.getElementById('postPreviewImg');
     const fileTxt = document.getElementById('postPreviewFile');
@@ -370,106 +740,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function clearChatPreview() {
-    currentChatAttachmentData = null;
-    currentChatAttachmentName = null;
-    
+    currentChatFile = null;
     const container = document.getElementById('chatPreviewContainer');
     if (container) container.style.display = 'none';
     if (elements.chatFileInput) elements.chatFileInput.value = '';
   }
 
-  window.toggleLike = function(id) {
-    posts = posts.map(p => p.id === id ? { ...p, likes: p.liked ? p.likes - 1 : p.likes + 1, liked: !p.liked } : p);
-    localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(getCurrentSearchQuery());
-  };
-
-  window.toggleDislike = function(id) {
-    posts = posts.map(p => p.id === id ? { ...p, dislikes: (p.dislikes || 0) + (p.disliked ? -1 : 1), disliked: !p.disliked } : p);
-    localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(getCurrentSearchQuery());
-  };
-
-  window.toggleCommentSection = function(id) {
-    const section = document.getElementById(`commentSection-${id}`);
-    if (section) {
-      section.classList.toggle('hidden');
-    }
-  };
-
-  window.addComment = function(id) {
-    const input = document.getElementById(`commentInput-${id}`);
-    if (!input || !input.value.trim()) return;
-
-    posts = posts.map(p => {
-      if (p.id === id) {
-        const comments = p.comments || [];
-        comments.push({
-          author: currentUser ? currentUser.name : 'Anonymous',
-          text: input.value.trim()
-        });
-        return { ...p, comments };
-      }
-      return p;
-    });
-
-    localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(getCurrentSearchQuery());
-  };
-
-  window.deletePost = function(id) {
-    posts = posts.filter(p => p.id !== id);
-    localStorage.setItem('soroti_forum_posts', JSON.stringify(posts));
-    renderFeed(getCurrentSearchQuery());
-  };
-
-  window.openChat = function(friendName) {
-    if (!elements.chatPopup) return;
-    elements.chatFriendName.textContent = `Chat with ${friendName || 'Friend'}`;
-    elements.chatPopup.classList.remove('hidden');
-    elements.chatMessages.innerHTML = `<div class="chat-msg system">Started chat with ${escapeHTML(friendName || 'Friend')}</div>`;
-  };
-
-  window.openChatFromTab = function(friendName) {
-    openChat(friendName);
-  };
-
-  function sendChatMessage() {
+  async function sendChatMessage() {
     const text = elements.chatInput.value.trim();
-    if (!text && !currentChatAttachmentData) return;
+    if ((!text && !currentChatFile) || !activeChatRoom) return;
 
-    const msgEl = document.createElement('div');
-    msgEl.className = 'chat-msg outgoing';
-    
-    let html = '';
-    if (text) {
-      html += `<div>${escapeHTML(text)}</div>`;
+    let attachmentUrl = null;
+    if (currentChatFile) {
+      attachmentUrl = await uploadMediaFile(currentChatFile, 'chat_attachments');
     }
-    if (currentChatAttachmentData) {
-      html += `<div style="margin-top: 5px;"><img src="${currentChatAttachmentData}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
-    }
-    
-    msgEl.innerHTML = html;
-    elements.chatMessages.appendChild(msgEl);
+
+    await push(ref(database, `chats/${activeChatRoom}`), {
+      senderUid: currentUser ? currentUser.uid : 'anon',
+      senderName: currentUser ? currentUser.name : 'Anonymous',
+      text: text,
+      attachment: attachmentUrl,
+      timestamp: Date.now()
+    });
 
     elements.chatInput.value = '';
     clearChatPreview();
-    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
-  }
-
-  function showToast(message) {
-    if (!elements.toastNotice) return;
-    elements.toastNotice.querySelector('span').innerHTML = message;
-    elements.toastNotice.style.display = 'flex';
-    setTimeout(() => { elements.toastNotice.style.display = 'none'; }, 4000);
-  }
-
-  function escapeHTML(str) {
-    return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
-  }
-
-  function getInitials(name) {
-    return name.split(' ').map(p => p[0]).join('').toUpperCase().substring(0, 2) || 'SY';
   }
 
   function switchTab(targetTab) {
@@ -489,16 +784,57 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function bindEvents() {
+    const markAllReadBtn = document.getElementById('markAllReadBtn');
+    if (markAllReadBtn) {
+      markAllReadBtn.addEventListener('click', markAllNotificationsRead);
+    }
+
+    const enablePushBtn = document.getElementById('enablePushBtn');
+    if (enablePushBtn) {
+      enablePushBtn.addEventListener('click', () => {
+        if ("Notification" in window) {
+          Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+              showToast("Desktop notifications enabled!");
+              triggerDesktopPush("Soroti Youth Forum", "Desktop alerts activated successfully.");
+            } else {
+              showToast("Notification permission denied.");
+            }
+          });
+        } else {
+          showToast("Browser does not support desktop alerts.");
+        }
+      });
+    }
+
     if (elements.tabLoginBtn) elements.tabLoginBtn.addEventListener('click', () => setAuthMode(false));
     if (elements.tabSignupBtn) elements.tabSignupBtn.addEventListener('click', () => setAuthMode(true));
     if (elements.authPageForm) elements.authPageForm.addEventListener('submit', handleAuthSubmit);
-    if (elements.signupBtn) {
-      elements.signupBtn.addEventListener('click', () => { 
-        localStorage.removeItem('soroti_forum_user'); 
-        currentUser = null; 
-        updateAuthView(); 
+    
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+    if (forgotPasswordBtn) {
+      forgotPasswordBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const email = elements.pageAuthEmail.value.trim();
+        if (!email) {
+          if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Enter your email above to reset password.';
+          return;
+        }
+        try {
+          await sendPasswordResetEmail(auth, email);
+          showToast('Password reset link sent to your email!');
+        } catch (err) {
+          if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message.replace('Firebase: ', '');
+        }
       });
     }
+
+    if (elements.signupBtn) {
+      elements.signupBtn.addEventListener('click', () => { 
+        if (elements.authScreen) elements.authScreen.style.display = 'flex';
+      });
+    }
+    
     elements.logoutBtns.forEach(btn => btn.addEventListener('click', handleLogout));
 
     if (elements.navBtns) {
@@ -521,41 +857,31 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // --- Attachment Photo Input Listener (Post) ---
     if (elements.postPhotoInput) {
       elements.postPhotoInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            currentPostAttachmentData = event.target.result;
-            currentPostAttachmentType = 'image';
-            currentPostAttachmentName = file.name;
+          currentPostFile = file;
 
-            const container = document.getElementById('postPreviewContainer');
-            const img = document.getElementById('postPreviewImg');
-            const fileTxt = document.getElementById('postPreviewFile');
+          const container = document.getElementById('postPreviewContainer');
+          const img = document.getElementById('postPreviewImg');
+          const fileTxt = document.getElementById('postPreviewFile');
 
-            if (container && img && fileTxt) {
-              container.style.display = 'block';
-              img.src = currentPostAttachmentData;
-              img.style.display = 'block';
-              fileTxt.style.display = 'none';
-            }
-          };
-          reader.readAsDataURL(file);
+          if (container && img && fileTxt) {
+            container.style.display = 'block';
+            img.src = URL.createObjectURL(file);
+            img.style.display = 'block';
+            fileTxt.style.display = 'none';
+          }
         }
       });
     }
 
-    // --- Attachment File Input Listener (Post) ---
     if (elements.postFileInput) {
       elements.postFileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          currentPostAttachmentData = file.name;
-          currentPostAttachmentType = 'file';
-          currentPostAttachmentName = file.name;
+          currentPostFile = file;
 
           const container = document.getElementById('postPreviewContainer');
           const img = document.getElementById('postPreviewImg');
@@ -571,37 +897,30 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // --- Clear Preview Button (Post) ---
     document.addEventListener('click', (e) => {
       if (e.target.closest('#clearPostPreviewBtn')) {
         clearPostPreview();
-        elements.postPhotoInput.value = '';
-        elements.postFileInput.value = '';
+        if (elements.postPhotoInput) elements.postPhotoInput.value = '';
+        if (elements.postFileInput) elements.postFileInput.value = '';
       }
       if (e.target.closest('#clearChatPreviewBtn')) {
         clearChatPreview();
       }
     });
 
-    // --- Attachment File Input Listener (Chat Popup) ---
     if (elements.chatFileInput) {
       elements.chatFileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            currentChatAttachmentData = event.target.result;
-            currentChatAttachmentName = file.name;
+          currentChatFile = file;
 
-            const container = document.getElementById('chatPreviewContainer');
-            const previewText = document.getElementById('chatPreviewText');
+          const container = document.getElementById('chatPreviewContainer');
+          const previewText = document.getElementById('chatPreviewText');
 
-            if (container && previewText) {
-              container.style.display = 'flex';
-              previewText.textContent = `Attached: ${file.name}`;
-            }
-          };
-          reader.readAsDataURL(file);
+          if (container && previewText) {
+            container.style.display = 'flex';
+            previewText.textContent = `Attached: ${file.name}`;
+          }
         }
       });
     }
@@ -638,11 +957,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     elements.chatBtns.forEach(btn => {
-      btn.addEventListener('click', () => openChat(btn.dataset.name));
+      btn.addEventListener('click', () => window.openChat(btn.dataset.uid, btn.dataset.name));
     });
 
     if (elements.chatCloseBtn) {
-      elements.chatCloseBtn.addEventListener('click', () => elements.chatPopup.classList.add('hidden'));
+      elements.chatCloseBtn.addEventListener('click', () => {
+        elements.chatPopup.classList.add('hidden');
+        if (activeChatListener) activeChatListener();
+      });
     }
 
     if (elements.chatSendBtn) {
@@ -668,36 +990,46 @@ document.addEventListener('DOMContentLoaded', () => {
       profilePicInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          const reader = new FileReader();
-          reader.onload = function(event) {
-            uploadedAvatarData = event.target.result;
-            const previewEl = document.getElementById('settingsAvatarPreview');
-            if (previewEl) {
-              previewEl.style.backgroundImage = `url(${uploadedAvatarData})`;
-              previewEl.style.backgroundSize = 'cover';
-              previewEl.style.backgroundPosition = 'center';
-              previewEl.textContent = '';
-            }
-          };
-          reader.readAsDataURL(file);
+          uploadedAvatarFile = file;
+          const previewEl = document.getElementById('settingsAvatarPreview');
+          if (previewEl) {
+            previewEl.style.backgroundImage = `url(${URL.createObjectURL(file)})`;
+            previewEl.style.backgroundSize = 'cover';
+            previewEl.style.backgroundPosition = 'center';
+            previewEl.textContent = '';
+          }
         }
       });
     }
 
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     if (saveSettingsBtn) {
-      saveSettingsBtn.addEventListener('click', () => {
+      saveSettingsBtn.addEventListener('click', async () => {
         const newName = document.getElementById('settingsNameInput').value.trim();
-        const newEmail = document.getElementById('settingsEmailInput').value.trim();
         
         if (currentUser) {
-          if (newName) currentUser.name = newName;
-          if (newEmail) currentUser.email = newEmail;
-          if (uploadedAvatarData) currentUser.avatarUrl = uploadedAvatarData;
+          const updates = {};
+          if (newName) updates.displayName = newName;
           
-          localStorage.setItem('soroti_forum_user', JSON.stringify(currentUser));
+          if (uploadedAvatarFile) {
+            showToast('Uploading profile image...');
+            const avatarUrl = await uploadMediaFile(uploadedAvatarFile, 'user_avatars');
+            if (avatarUrl) {
+              updates.avatarUrl = avatarUrl;
+              currentUser.avatarUrl = avatarUrl;
+            }
+          }
+
+          try {
+            await update(ref(database, `users/${currentUser.uid}`), updates);
+          } catch (err) {
+            console.warn("Could not save settings to database:", err);
+          }
+          
+          if (newName) currentUser.name = newName;
+
           updateUserUI();
-          showToast('Settings updated successfully!');
+          showToast('Settings updated!');
         }
       });
     }
