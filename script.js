@@ -45,13 +45,20 @@ const storage = getStorage(app);
 
 // 3. GLOBAL STATE
 let postsList = [];
+let usersList = [];
+let friendsList = [];
+let pendingRequests = [];
+let sentRequests = [];
 let currentUser = null;
 let activeChatRoom = null;
 let activeChatListener = null;
 let notifListener = null;
+let friendsListener = null;
+let requestsListener = null;
 
 let currentPostFile = null;
 let currentChatFile = null;
+let uploadedAvatarFile = null;
 
 // 4. HELPER FUNCTIONS
 async function uploadMediaFile(file, folderPath) {
@@ -61,7 +68,7 @@ async function uploadMediaFile(file, folderPath) {
     const snapshot = await uploadBytes(fileReference, file);
     return await getDownloadURL(snapshot.ref);
   } catch (error) {
-    console.warn("Storage upload warning (Cloud Storage may not be enabled yet):", error);
+    console.warn("Storage upload warning:", error);
     showToast("Cloud Storage disabled or unconfigured. Proceeding without attachment.");
     return null;
   }
@@ -72,7 +79,14 @@ function getInitials(name) {
 }
 
 function escapeHTML(str) {
-  return str ? str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)) : '';
+  if (!str) return '';
+  return String(str).replace(/[&<>'"]/g, tag => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  }[tag] || tag));
 }
 
 export async function sendNotification(targetUid, title, message, icon = 'fa-bell') {
@@ -115,35 +129,88 @@ export async function sendEmailAuthLink(email) {
   }
 }
 
+window.sendFriendRequest = async function(targetUid) {
+  if (!currentUser) return;
+  try {
+    await set(ref(database, `friendRequests/${targetUid}/${currentUser.uid}`), {
+      fromName: currentUser.name,
+      timestamp: Date.now()
+    });
+    await set(ref(database, `sentRequests/${currentUser.uid}/${targetUid}`), true);
+    sendNotification(targetUid, currentUser.name, 'sent you a friend request.', 'fa-user-plus');
+    showToast('Friend request sent!');
+  } catch (err) {
+    console.error("Failed to send friend request:", err);
+  }
+};
+
+window.acceptFriendRequest = async function(senderUid, senderName) {
+  if (!currentUser) return;
+  try {
+    const updates = {};
+    updates[`friends/${currentUser.uid}/${senderUid}`] = true;
+    updates[`friends/${senderUid}/${currentUser.uid}`] = true;
+    updates[`friendRequests/${currentUser.uid}/${senderUid}`] = null;
+    updates[`sentRequests/${senderUid}/${currentUser.uid}`] = null;
+    
+    await update(ref(database), updates);
+    sendNotification(senderUid, currentUser.name, 'accepted your friend request.', 'fa-user-check');
+    showToast(`You are now friends with ${senderName}`);
+  } catch (err) {
+    console.error("Failed to accept request:", err);
+  }
+};
+
+window.removeFriend = async function(friendUid) {
+  if (!currentUser || !confirm('Are you sure you want to remove this friend?')) return;
+  try {
+    const updates = {};
+    updates[`friends/${currentUser.uid}/${friendUid}`] = null;
+    updates[`friends/${friendUid}/${currentUser.uid}`] = null;
+    await update(ref(database), updates);
+    showToast('Friend removed.');
+  } catch (err) {
+    console.error("Failed to remove friend:", err);
+  }
+};
+
 window.toggleLike = async function(id) {
   if (!currentUser) return;
-  const postRef = ref(database, `posts/${id}`);
-  const snapshot = await get(postRef);
+  try {
+    const postRef = ref(database, `posts/${id}`);
+    const snapshot = await get(postRef);
 
-  if (snapshot.exists()) {
-    const post = snapshot.val();
-    const likeRef = ref(database, `posts/${id}/likes/${currentUser.uid}`);
-    const likeSnap = await get(likeRef);
+    if (snapshot.exists()) {
+      const post = snapshot.val();
+      const likeRef = ref(database, `posts/${id}/likes/${currentUser.uid}`);
+      const likeSnap = await get(likeRef);
 
-    if (likeSnap.exists()) {
-      await remove(likeRef);
-    } else {
-      await set(likeRef, true);
-      if (post.uid && post.uid !== currentUser.uid) {
-        sendNotification(post.uid, currentUser.name, 'liked your post.', 'fa-heart');
+      if (likeSnap.exists()) {
+        await remove(likeRef);
+      } else {
+        await set(likeRef, true);
+        if (post.uid && post.uid !== currentUser.uid) {
+          sendNotification(post.uid, currentUser.name, 'liked your post.', 'fa-heart');
+        }
       }
     }
+  } catch (err) {
+    console.error("Failed to toggle like:", err);
   }
 };
 
 window.toggleDislike = async function(id) {
   if (!currentUser) return;
-  const dislikeRef = ref(database, `posts/${id}/dislikes/${currentUser.uid}`);
-  const snapshot = await get(dislikeRef);
-  if (snapshot.exists()) {
-    await remove(dislikeRef);
-  } else {
-    await set(dislikeRef, true);
+  try {
+    const dislikeRef = ref(database, `posts/${id}/dislikes/${currentUser.uid}`);
+    const snapshot = await get(dislikeRef);
+    if (snapshot.exists()) {
+      await remove(dislikeRef);
+    } else {
+      await set(dislikeRef, true);
+    }
+  } catch (err) {
+    console.error("Failed to toggle dislike:", err);
   }
 };
 
@@ -156,30 +223,37 @@ window.addComment = async function(id) {
   const input = document.getElementById(`commentInput-${id}`);
   if (!input || !input.value.trim()) return;
 
-  const postRef = ref(database, `posts/${id}`);
-  const snapshot = await get(postRef);
+  try {
+    const postRef = ref(database, `posts/${id}`);
+    const snapshot = await get(postRef);
 
-  if (snapshot.exists()) {
-    const post = snapshot.val();
-    const commentsRef = ref(database, `posts/${id}/comments`);
-    
-    await push(commentsRef, {
-      author: currentUser ? currentUser.name : 'Anonymous',
-      text: input.value.trim(),
-      createdAt: Date.now()
-    });
+    if (snapshot.exists()) {
+      const post = snapshot.val();
+      const commentsRef = ref(database, `posts/${id}/comments`);
+      
+      await push(commentsRef, {
+        author: currentUser ? currentUser.name : 'Anonymous',
+        text: input.value.trim(),
+        createdAt: Date.now()
+      });
 
-    if (post.uid && currentUser && post.uid !== currentUser.uid) {
-      sendNotification(post.uid, currentUser.name, 'commented on your post.', 'fa-comment');
+      if (post.uid && currentUser && post.uid !== currentUser.uid) {
+        sendNotification(post.uid, currentUser.name, 'commented on your post.', 'fa-comment');
+      }
     }
+    input.value = '';
+  } catch (err) {
+    console.error("Failed to add comment:", err);
   }
-
-  input.value = '';
 };
 
 window.deletePost = async function(id) {
   if (confirm('Are you sure you want to delete this post?')) {
-    await remove(ref(database, `posts/${id}`));
+    try {
+      await remove(ref(database, `posts/${id}`));
+    } catch (err) {
+      console.error("Failed to delete post:", err);
+    }
   }
 };
 
@@ -211,11 +285,11 @@ window.openChat = function(recipientUid, recipientName) {
       Object.values(data).forEach(msg => {
         const msgEl = document.createElement('div');
         const isMe = msg.senderUid === currentUser.uid;
-        msgEl.className = isMe ? 'chat-msg outgoing' : 'chat-msg system';
+        msgEl.className = isMe ? 'chat-msg outgoing' : 'chat-msg incoming';
         
         let html = `<div>${escapeHTML(msg.text || '')}</div>`;
         if (msg.attachment) {
-          html += `<div style="margin-top: 5px;"><img src="${msg.attachment}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
+          html += `<div style="margin-top: 5px;"><img src="${escapeHTML(msg.attachment)}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
         }
         msgEl.innerHTML = html;
         chatMessages.appendChild(msgEl);
@@ -259,7 +333,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let isSignUpMode = false;
-  let uploadedAvatarFile = null;
 
   const elements = {
     authScreen: document.getElementById('authScreen'),
@@ -306,7 +379,6 @@ document.addEventListener('DOMContentLoaded', () => {
     chatFileInput: document.getElementById('chatFileInput'),
     chatSendBtn: document.getElementById('chatSendBtn'),
     chatCloseBtn: document.getElementById('chatCloseBtn'),
-    chatBtns: document.querySelectorAll('.chat-btn'),
     
     callBtn: document.querySelector('.call-btn'),
     videoBtn: document.querySelector('.video-btn'),
@@ -320,6 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
     listenToAuthState();
     listenToPosts();
+    listenToUsers();
   }
 
   function listenToAuthState() {
@@ -343,12 +416,142 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         updateAuthView(true);
         listenToNotifications();
+        listenToUserSocialData();
       } else {
         currentUser = null;
         if (notifListener) notifListener();
+        if (friendsListener) friendsListener();
+        if (requestsListener) requestsListener();
         updateAuthView(false);
       }
     });
+  }
+
+  function listenToUserSocialData() {
+    if (!currentUser) return;
+    
+    friendsListener = onValue(ref(database, `friends/${currentUser.uid}`), (snap) => {
+      friendsList = snap.exists() ? Object.keys(snap.val()) : [];
+      renderUsersList();
+    });
+
+    requestsListener = onValue(ref(database, `friendRequests/${currentUser.uid}`), (snap) => {
+      pendingRequests = [];
+      if (snap.exists()) {
+        Object.keys(snap.val()).forEach(uid => {
+          pendingRequests.push({ uid, ...snap.val()[uid] });
+        });
+      }
+      renderUsersList();
+    });
+
+    onValue(ref(database, `sentRequests/${currentUser.uid}`), (snap) => {
+      sentRequests = snap.exists() ? Object.keys(snap.val()) : [];
+      renderUsersList();
+    });
+  }
+
+  function listenToUsers() {
+    onValue(ref(database, 'users'), (snapshot) => {
+      const data = snapshot.val();
+      usersList = [];
+      if (data) {
+        Object.keys(data).forEach(uid => {
+          usersList.push({ uid, ...data[uid] });
+        });
+      }
+      renderUsersList();
+    });
+  }
+
+  function renderUsersList() {
+    const chatsContainer = document.getElementById('chatsListContainer');
+    const findFriendsContainer = document.getElementById('friendsListContainer');
+    const sidebarContainer = document.getElementById('sidebarMembersContainer');
+
+    const otherMembers = usersList.filter(u => !currentUser || u.uid !== currentUser.uid);
+    const addedFriends = otherMembers.filter(u => friendsList.includes(u.uid));
+
+    if (chatsContainer) {
+      chatsContainer.innerHTML = otherMembers.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No members registered yet.</p>' : otherMembers.map(u => `
+        <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')">
+          <div class="friend-user">
+            <div class="avatar-wrapper online">
+              <div class="avatar">${getInitials(u.displayName)}</div>
+              <div class="online-dot"></div>
+            </div>
+            <div>
+              <strong style="font-size: 14px; display: block;">${escapeHTML(u.displayName || 'Member')}</strong>
+              <span style="font-size: 12px; opacity: 0.7;">Click to message</span>
+            </div>
+          </div>
+          <button class="chat-btn"><i class="fa-solid fa-comment"></i> Chat</button>
+        </div>
+      `).join('');
+    }
+
+    if (findFriendsContainer) {
+      let html = '';
+
+      if (pendingRequests.length > 0) {
+        html += `<h4 style="margin: 10px 0 5px; font-size: 13px; color: var(--color-red);">Pending Requests</h4>`;
+        html += pendingRequests.map(req => `
+          <div class="friend-item" style="margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.02); border-radius: 6px;">
+            <div class="friend-user">
+              <div class="avatar">${getInitials(req.fromName)}</div>
+              <div><strong>${escapeHTML(req.fromName)}</strong></div>
+            </div>
+            <button class="chat-btn" style="background: var(--color-red); color: white;" onclick="acceptFriendRequest('${req.uid}', '${escapeHTML(req.fromName)}')"><i class="fa-solid fa-user-check"></i> Accept</button>
+          </div>
+        `).join('');
+      }
+
+      html += `<h4 style="margin: 15px 0 5px; font-size: 13px; color: #888;">Find Friends Network</h4>`;
+      html += otherMembers.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No other members to display.</p>' : otherMembers.map(u => {
+        const isFriend = friendsList.includes(u.uid);
+        const isSent = sentRequests.includes(u.uid);
+
+        let actionBtn = `<button class="chat-btn" onclick="sendFriendRequest('${u.uid}')"><i class="fa-solid fa-user-plus"></i> Add Friend</button>`;
+        if (isFriend) {
+          actionBtn = `<button class="chat-btn" style="opacity: 0.7;" onclick="removeFriend('${u.uid}')"><i class="fa-solid fa-user-minus"></i> Remove</button>`;
+        } else if (isSent) {
+          actionBtn = `<button class="chat-btn" disabled style="opacity: 0.5;"><i class="fa-solid fa-clock"></i> Pending</button>`;
+        }
+
+        return `
+          <div class="friend-item" style="margin-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;">
+            <div class="friend-user">
+              <div class="avatar-wrapper online">
+                <div class="avatar">${getInitials(u.displayName)}</div>
+                <div class="online-dot"></div>
+              </div>
+              <div>
+                <strong>${escapeHTML(u.displayName || 'Member')}</strong>
+                <span style="display: block; font-size: 11px; opacity: 0.6;">${escapeHTML(u.email || 'Soroti Youth Forum')}</span>
+              </div>
+            </div>
+            ${actionBtn}
+          </div>
+        `;
+      }).join('');
+
+      findFriendsContainer.innerHTML = html;
+    }
+
+    if (sidebarContainer) {
+      sidebarContainer.innerHTML = addedFriends.length === 0 ? '<p style="color:#888; font-size:12px;">No added friends online yet.</p>' : addedFriends.slice(0, 5).map(u => `
+        <div class="friend-item">
+          <div class="friend-user">
+            <div class="avatar-wrapper online">
+              <div class="avatar">${getInitials(u.displayName)}</div>
+              <div class="online-dot"></div>
+            </div>
+            <span>${escapeHTML(u.displayName || 'Member')}</span>
+          </div>
+          <button class="chat-btn" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i></button>
+        </div>
+      `).join('');
+    }
   }
 
   function listenToNotifications() {
@@ -393,25 +596,29 @@ document.addEventListener('DOMContentLoaded', () => {
     container.innerHTML = notifications.map(notif => `
       <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05); ${notif.read ? 'opacity: 0.6;' : 'font-weight: 600;'}">
         <span>
-          <i class="fa-solid ${notif.icon || 'fa-bell'}" style="color: var(--color-red); margin-right: 6px;"></i> 
+          <i class="fa-solid ${escapeHTML(notif.icon || 'fa-bell')}" style="color: var(--color-red); margin-right: 6px;"></i> 
           <strong>${escapeHTML(notif.title)}</strong> ${escapeHTML(notif.message)}
         </span>
-        <span style="font-size: 11px; opacity: 0.5;">${notif.time || 'Recently'}</span>
+        <span style="font-size: 11px; opacity: 0.5;">${escapeHTML(notif.time || 'Recently')}</span>
       </div>
     `).join('');
   }
 
   async function markAllNotificationsRead() {
     if (!currentUser) return;
-    const notifRef = ref(database, `notifications/${currentUser.uid}`);
-    const snapshot = await get(notifRef);
-    if (snapshot.exists()) {
-      const updates = {};
-      Object.keys(snapshot.val()).forEach(key => {
-        updates[`${key}/read`] = true;
-      });
-      await update(notifRef, updates);
-      showToast('All notifications marked as read.');
+    try {
+      const notifRef = ref(database, `notifications/${currentUser.uid}`);
+      const snapshot = await get(notifRef);
+      if (snapshot.exists()) {
+        const updates = {};
+        Object.keys(snapshot.val()).forEach(key => {
+          updates[`${key}/read`] = true;
+        });
+        await update(notifRef, updates);
+        showToast('All notifications marked as read.');
+      }
+    } catch (err) {
+      console.error("Failed to mark notifications read:", err);
     }
   }
 
@@ -630,10 +837,10 @@ document.addEventListener('DOMContentLoaded', () => {
           
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
             <div class="friend-user">
-              <div class="avatar-wrapper"><div class="avatar">${post.initials || 'SY'}</div></div>
+              <div class="avatar-wrapper"><div class="avatar">${escapeHTML(post.initials || 'SY')}</div></div>
               <div>
                 <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Anonymous')}</strong>
-                <span style="font-size: 11px; color: #888;">${post.time || 'Recently'}</span>
+                <span style="font-size: 11px; color: #888;">${escapeHTML(post.time || 'Recently')}</span>
               </div>
             </div>
             
@@ -651,10 +858,10 @@ document.addEventListener('DOMContentLoaded', () => {
           ${post.attachment ? (
             isImage ? 
               `<div style="margin-bottom: 12px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); background: #000;">
-                <img src="${post.attachment}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
+                <img src="${escapeHTML(post.attachment)}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
                </div>` : 
               `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
-                <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${post.attachment}" target="_blank" style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
+                <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${escapeHTML(post.attachment)}" target="_blank" style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
                </div>`
           ) : ''}
           
@@ -718,14 +925,17 @@ document.addEventListener('DOMContentLoaded', () => {
       comments: {}
     };
 
-    await push(ref(database, 'posts'), newPost);
-
-    elements.postText.value = '';
-    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
-    if (elements.postFileInput) elements.postFileInput.value = '';
-    clearPostPreview();
-
-    showToast('Post published successfully!');
+    try {
+      await push(ref(database, 'posts'), newPost);
+      elements.postText.value = '';
+      if (elements.postPhotoInput) elements.postPhotoInput.value = '';
+      if (elements.postFileInput) elements.postFileInput.value = '';
+      clearPostPreview();
+      showToast('Post published successfully!');
+    } catch (err) {
+      console.error("Failed to create post:", err);
+      showToast('Failed to create post. Please try again.');
+    }
   }
 
   function clearPostPreview() {
@@ -755,16 +965,20 @@ document.addEventListener('DOMContentLoaded', () => {
       attachmentUrl = await uploadMediaFile(currentChatFile, 'chat_attachments');
     }
 
-    await push(ref(database, `chats/${activeChatRoom}`), {
-      senderUid: currentUser ? currentUser.uid : 'anon',
-      senderName: currentUser ? currentUser.name : 'Anonymous',
-      text: text,
-      attachment: attachmentUrl,
-      timestamp: Date.now()
-    });
+    try {
+      await push(ref(database, `chats/${activeChatRoom}`), {
+        senderUid: currentUser ? currentUser.uid : 'anon',
+        senderName: currentUser ? currentUser.name : 'Anonymous',
+        text: text,
+        attachment: attachmentUrl,
+        timestamp: Date.now()
+      });
 
-    elements.chatInput.value = '';
-    clearChatPreview();
+      elements.chatInput.value = '';
+      clearChatPreview();
+    } catch (err) {
+      console.error("Failed to send chat message:", err);
+    }
   }
 
   function switchTab(targetTab) {
@@ -815,16 +1029,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (forgotPasswordBtn) {
       forgotPasswordBtn.addEventListener('click', async (e) => {
         e.preventDefault();
-        const email = elements.pageAuthEmail.value.trim();
+        const email = elements.pageAuthEmail ? elements.pageAuthEmail.value.trim() : '';
+        
         if (!email) {
-          if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Enter your email above to reset password.';
+          if (elements.authErrorMsg) {
+            elements.authErrorMsg.textContent = 'Enter your email above to reset password.';
+          }
           return;
         }
+
         try {
           await sendPasswordResetEmail(auth, email);
           showToast('Password reset link sent to your email!');
         } catch (err) {
-          if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message.replace('Firebase: ', '');
+          if (elements.authErrorMsg) {
+            elements.authErrorMsg.textContent = err.message.replace('Firebase: ', '');
+          }
         }
       });
     }
@@ -956,10 +1176,6 @@ document.addEventListener('DOMContentLoaded', () => {
       elements.toastClose.addEventListener('click', () => elements.toastNotice.style.display = 'none');
     }
 
-    elements.chatBtns.forEach(btn => {
-      btn.addEventListener('click', () => window.openChat(btn.dataset.uid, btn.dataset.name));
-    });
-
     if (elements.chatCloseBtn) {
       elements.chatCloseBtn.addEventListener('click', () => {
         elements.chatPopup.classList.add('hidden');
@@ -1007,29 +1223,35 @@ document.addEventListener('DOMContentLoaded', () => {
       saveSettingsBtn.addEventListener('click', async () => {
         const newName = document.getElementById('settingsNameInput').value.trim();
         
-        if (currentUser) {
+        if (currentUser && auth.currentUser) {
           const updates = {};
-          if (newName) updates.displayName = newName;
+          const authUpdates = {};
+          
+          if (newName) {
+            updates.displayName = newName;
+            authUpdates.displayName = newName;
+          }
           
           if (uploadedAvatarFile) {
             showToast('Uploading profile image...');
             const avatarUrl = await uploadMediaFile(uploadedAvatarFile, 'user_avatars');
             if (avatarUrl) {
               updates.avatarUrl = avatarUrl;
+              authUpdates.photoURL = avatarUrl;
               currentUser.avatarUrl = avatarUrl;
             }
           }
 
           try {
+            await updateProfile(auth.currentUser, authUpdates);
             await update(ref(database, `users/${currentUser.uid}`), updates);
+            if (newName) currentUser.name = newName;
+            updateUserUI();
+            showToast('Settings updated!');
           } catch (err) {
-            console.warn("Could not save settings to database:", err);
+            console.error("Could not save settings:", err);
+            showToast('Failed to update settings.');
           }
-          
-          if (newName) currentUser.name = newName;
-
-          updateUserUI();
-          showToast('Settings updated!');
         }
       });
     }

@@ -106,7 +106,7 @@
 
       <div class="search-row">
         <div class="search-bar-wrap">
-          <input type="text" class="search-input" id="searchInput" placeholder="Search Soroti Youth Forum..." />
+          <input type="text" class="search-input" id="searchInput" placeholder="Search Soroti Youth Forum..." autocomplete="off" />
         </div>
         <button class="search-action-btn" id="searchActionBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
       </div>
@@ -158,35 +158,8 @@
         <div id="chatsView" class="tab-view hidden">
           <div class="card">
             <div class="animated-stripe-bar"></div>
-            <h3>Recent Conversations</h3>
-            
-            <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('user_john_o', 'John O.')">
-              <div class="friend-user">
-                <div class="avatar-wrapper online">
-                  <div class="avatar">JO</div>
-                  <div class="online-dot"></div>
-                </div>
-                <div>
-                  <strong style="font-size: 14px; display: block;">John O.</strong>
-                  <span style="font-size: 12px; opacity: 0.7;">See you at the workshop this Saturday!</span>
-                </div>
-              </div>
-              <span style="font-size: 11px; opacity: 0.5;">10m ago</span>
-            </div>
-
-            <div class="friend-item" style="cursor: pointer; padding: 10px 0;" onclick="openChatFromTab('user_emmanuel_a', 'Emmanuel A.')">
-              <div class="friend-user">
-                <div class="avatar-wrapper online">
-                  <div class="avatar">EA</div>
-                  <div class="online-dot"></div>
-                </div>
-                <div>
-                  <strong style="font-size: 14px; display: block;">Emmanuel A.</strong>
-                  <span style="font-size: 12px; opacity: 0.7;">Thanks for sharing the update.</span>
-                </div>
-              </div>
-              <span style="font-size: 11px; opacity: 0.5;">1h ago</span>
-            </div>
+            <h3>Registered Members</h3>
+            <div id="chatsListContainer"></div>
           </div>
         </div>
 
@@ -194,47 +167,7 @@
           <div class="card">
             <div class="animated-stripe-bar"></div>
             <h3>Soroti Youth Network</h3>
-            
-            <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
-              <div class="friend-user">
-                <div class="avatar-wrapper online">
-                  <div class="avatar">JO</div>
-                  <div class="online-dot"></div>
-                </div>
-                <div>
-                  <strong>John O.</strong>
-                  <span style="display: block; font-size: 12px; opacity: 0.7;">Software Developer • Soroti</span>
-                </div>
-              </div>
-              <button class="chat-btn" onclick="openChatFromTab('user_john_o', 'John O.')"><i class="fa-solid fa-message"></i> Message</button>
-            </div>
-
-            <div class="friend-item" style="margin-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
-              <div class="friend-user">
-                <div class="avatar-wrapper online">
-                  <div class="avatar">EA</div>
-                  <div class="online-dot"></div>
-                </div>
-                <div>
-                  <strong>Emmanuel A.</strong>
-                  <span style="display: block; font-size: 12px; opacity: 0.7;">Community Organizer • Soroti</span>
-                </div>
-              </div>
-              <button class="chat-btn" onclick="openChatFromTab('user_emmanuel_a', 'Emmanuel A.')"><i class="fa-solid fa-message"></i> Message</button>
-            </div>
-
-            <div class="friend-item">
-              <div class="friend-user">
-                <div class="avatar-wrapper">
-                  <div class="avatar">SA</div>
-                </div>
-                <div>
-                  <strong>Sarah A.</strong>
-                  <span style="display: block; font-size: 12px; opacity: 0.7;">Student • Soroti University</span>
-                </div>
-              </div>
-              <button class="chat-btn" onclick="openChatFromTab('user_sarah_a', 'Sarah A.')"><i class="fa-solid fa-message"></i> Message</button>
-            </div>
+            <div id="friendsListContainer"></div>
           </div>
         </div>
 
@@ -294,29 +227,8 @@
       <div class="sidebar-right">
         <div class="card">
           <div class="animated-stripe-bar"></div>
-          <h3>Friends & Chat</h3>
-          
-          <div class="friend-item">
-            <div class="friend-user">
-              <div class="avatar-wrapper online">
-                <div class="avatar">JO</div>
-                <div class="online-dot"></div>
-              </div>
-              <span>John O.</span>
-            </div>
-            <button class="chat-btn" data-uid="user_john_o" data-name="John O."><i class="fa-solid fa-comment"></i> Chat</button>
-          </div>
-            
-          <div class="friend-item">
-            <div class="friend-user">
-              <div class="avatar-wrapper online">
-                <div class="avatar">EA</div>
-                <div class="online-dot"></div>
-              </div>
-              <span>Emmanuel A.</span>
-            </div>
-            <button class="chat-btn" data-uid="user_emmanuel_a" data-name="Emmanuel A."><i class="fa-solid fa-comment"></i> Chat</button>
-          </div>
+          <h3>Active Members</h3>
+          <div id="sidebarMembersContainer"></div>
         </div>
       </div>
 
