@@ -7,7 +7,6 @@ import {
   signOut, 
   onAuthStateChanged, 
   updateProfile,
-  sendSignInLinkToEmail,
   sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { 
@@ -15,10 +14,15 @@ import {
   ref, 
   push, 
   onValue, 
+  off,
+  query,
+  limitToLast,
   update, 
   remove, 
   set, 
-  get 
+  get,
+  onDisconnect,
+  serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 import { 
   getStorage, 
@@ -50,26 +54,81 @@ let friendsList = [];
 let pendingRequests = [];
 let sentRequests = [];
 let currentUser = null;
+
 let activeChatRoom = null;
-let activeChatListener = null;
-let notifListener = null;
-let friendsListener = null;
-let requestsListener = null;
+let activeChatRef = null;
+let activeChatCallback = null;
+
+let notifRef = null;
+let notifCallback = null;
+let friendsRef = null;
+let friendsCallback = null;
+let requestsRef = null;
+let requestsCallback = null;
+let sentRequestsRef = null;
+let sentRequestsCallback = null;
+let connectedRef = null;
+let connectedCallback = null;
 
 let currentPostFile = null;
 let currentChatFile = null;
 let uploadedAvatarFile = null;
 
 // 4. HELPER FUNCTIONS
+async function compressImage(file, maxWidth = 1000, quality = 0.75) {
+  if (!file.type.startsWith('image/')) return file;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          resolve(new File([blob], file.name, {
+            type: file.type,
+            lastModified: Date.now()
+          }));
+        }, file.type, quality);
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
+}
+
 async function uploadMediaFile(file, folderPath) {
   if (!file) return null;
+
+  const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB Limit
+  if (file.size > MAX_SIZE_BYTES) {
+    showToast("File size exceeds 5MB upload limit.");
+    return null;
+  }
+
   try {
-    const fileReference = storageRef(storage, `${folderPath}/${Date.now()}_${file.name}`);
-    const snapshot = await uploadBytes(fileReference, file);
-    return await getDownloadURL(snapshot.ref);
+    const fileToUpload = file.type.startsWith('image/') ? await compressImage(file) : file;
+    const uniqueFileName = `${crypto.randomUUID()}_${fileToUpload.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const fileReference = storageRef(storage, `${folderPath}/${uniqueFileName}`);
+    await uploadBytes(fileReference, fileToUpload);
+    return await getDownloadURL(fileReference);
   } catch (error) {
     console.warn("Storage upload warning:", error);
-    showToast("Cloud Storage disabled or unconfigured. Proceeding without attachment.");
+    showToast("Cloud Storage upload failed.");
     return null;
   }
 }
@@ -92,8 +151,8 @@ function escapeHTML(str) {
 export async function sendNotification(targetUid, title, message, icon = 'fa-bell') {
   if (!targetUid) return;
   try {
-    const notifRef = ref(database, `notifications/${targetUid}`);
-    await push(notifRef, {
+    const targetNotifRef = ref(database, `notifications/${targetUid}`);
+    await push(targetNotifRef, {
       title: title,
       message: message,
       icon: icon,
@@ -101,6 +160,7 @@ export async function sendNotification(targetUid, title, message, icon = 'fa-bel
       createdAt: Date.now(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
+    triggerDesktopPush(title, message);
   } catch (err) {
     console.warn("Could not dispatch notification:", err);
   }
@@ -112,23 +172,61 @@ function triggerDesktopPush(title, body) {
   }
 }
 
-// 5. GLOBAL WINDOW HANDLERS
-export async function sendEmailAuthLink(email) {
-  const actionCodeSettings = {
-    url: 'https://soroti-youth-forum.firebaseapp.com/finishSignUp',
-    handleCodeInApp: true,
-    linkDomain: 'soroti-youth-forum.firebaseapp.com'
-  };
-
-  try {
-    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
-    window.localStorage.setItem('emailForSignIn', email);
-  } catch (error) {
-    console.error("Error sending auth email link:", error);
-    throw error;
-  }
+function showToast(message) {
+  const toastNotice = document.getElementById('toastNotice');
+  if (!toastNotice) return;
+  toastNotice.querySelector('span').innerHTML = message;
+  toastNotice.style.display = 'flex';
+  setTimeout(() => { toastNotice.style.display = 'none'; }, 4000);
 }
 
+function setupPresenceSystem(user) {
+  if (!user) return;
+  
+  if (connectedRef && connectedCallback) {
+    off(connectedRef, 'value', connectedCallback);
+  }
+
+  connectedRef = ref(database, ".info/connected");
+  const userStatusRef = ref(database, `users/${user.uid}/isOnline`);
+  const userLastSeenRef = ref(database, `users/${user.uid}/lastSeen`);
+
+  connectedCallback = (snapshot) => {
+    if (snapshot.val() === false) return;
+    onDisconnect(userStatusRef).set(false).then(() => {
+      onDisconnect(userLastSeenRef).set(serverTimestamp());
+      set(userStatusRef, true);
+      set(userLastSeenRef, serverTimestamp());
+    });
+  };
+
+  onValue(connectedRef, connectedCallback);
+}
+
+function detachUserListeners() {
+  if (notifRef && notifCallback) off(notifRef, 'value', notifCallback);
+  if (friendsRef && friendsCallback) off(friendsRef, 'value', friendsCallback);
+  if (requestsRef && requestsCallback) off(requestsRef, 'value', requestsCallback);
+  if (sentRequestsRef && sentRequestsCallback) off(sentRequestsRef, 'value', sentRequestsCallback);
+  if (connectedRef && connectedCallback) off(connectedRef, 'value', connectedCallback);
+  if (activeChatRef && activeChatCallback) off(activeChatRef, 'value', activeChatCallback);
+
+  notifRef = null; notifCallback = null;
+  friendsRef = null; friendsCallback = null;
+  requestsRef = null; requestsCallback = null;
+  sentRequestsRef = null; sentRequestsCallback = null;
+  connectedRef = null; connectedCallback = null;
+  activeChatRef = null; activeChatCallback = null;
+}
+
+function closeDrawer() {
+  const navDrawer = document.getElementById('navDrawer');
+  const drawerOverlay = document.getElementById('drawerOverlay');
+  if (navDrawer) navDrawer.classList.remove('open');
+  if (drawerOverlay) drawerOverlay.classList.remove('active');
+}
+
+// 5. GLOBAL INTERACTIVE WINDOW FUNCTIONS
 window.sendFriendRequest = async function(targetUid) {
   if (!currentUser) return;
   try {
@@ -247,13 +345,56 @@ window.addComment = async function(id) {
   }
 };
 
+// FEATURE ENHANCEMENT 1: EDIT POST
+window.toggleEditPost = function(id) {
+  const displayEl = document.getElementById(`postContent-${id}`);
+  const editContainer = document.getElementById(`editPostContainer-${id}`);
+  if (displayEl && editContainer) {
+    displayEl.classList.toggle('hidden');
+    editContainer.classList.toggle('hidden');
+  }
+};
+
+window.saveEditPost = async function(id) {
+  const textarea = document.getElementById(`editPostInput-${id}`);
+  if (!textarea) return;
+  const newContent = textarea.value.trim();
+  if (!newContent) {
+    showToast("Post content cannot be empty.");
+    return;
+  }
+
+  try {
+    await update(ref(database, `posts/${id}`), {
+      content: newContent,
+      editedAt: Date.now(),
+      isEdited: true
+    });
+    showToast("Post updated successfully!");
+  } catch (err) {
+    console.error("Failed to update post:", err);
+    showToast("Failed to save changes.");
+  }
+};
+
 window.deletePost = async function(id) {
-  if (confirm('Are you sure you want to delete this post?')) {
-    try {
-      await remove(ref(database, `posts/${id}`));
-    } catch (err) {
-      console.error("Failed to delete post:", err);
+  if (!currentUser) return;
+  try {
+    const postRef = ref(database, `posts/${id}`);
+    const snapshot = await get(postRef);
+    if (snapshot.exists()) {
+      const post = snapshot.val();
+      if (post.uid === currentUser.uid || post.authorEmail === currentUser.email) {
+        if (confirm('Are you sure you want to delete this post?')) {
+          await remove(postRef);
+          showToast('Post deleted successfully.');
+        }
+      } else {
+        showToast('Unauthorized: You can only delete your own posts.');
+      }
     }
+  } catch (err) {
+    console.error("Failed to delete post:", err);
   }
 };
 
@@ -274,11 +415,14 @@ window.openChat = function(recipientUid, recipientName) {
   const roomPath = recipientUid ? [currentUser.uid, recipientUid].sort().join('_') : 'global_room';
   activeChatRoom = `direct_${roomPath}`;
 
-  if (activeChatListener) activeChatListener();
+  if (activeChatRef && activeChatCallback) {
+    off(activeChatRef, 'value', activeChatCallback);
+  }
 
   chatMessages.innerHTML = `<div class="chat-msg system">Connecting to conversation...</div>`;
 
-  activeChatListener = onValue(ref(database, `chats/${activeChatRoom}`), (snapshot) => {
+  activeChatRef = ref(database, `chats/${activeChatRoom}`);
+  activeChatCallback = (snapshot) => {
     const data = snapshot.val();
     chatMessages.innerHTML = `<div class="chat-msg system">Private Chat - ${escapeHTML(recipientName || 'Group')}</div>`;
     if (data) {
@@ -296,41 +440,37 @@ window.openChat = function(recipientUid, recipientName) {
       });
       chatMessages.scrollTop = chatMessages.scrollHeight;
     }
-  });
+  };
+
+  onValue(activeChatRef, activeChatCallback);
 };
 
 window.openChatFromTab = function(friendUid, friendName) {
   window.openChat(friendUid, friendName);
 };
 
-function showToast(message) {
-  const toastNotice = document.getElementById('toastNotice');
-  if (!toastNotice) return;
-  toastNotice.querySelector('span').innerHTML = message;
-  toastNotice.style.display = 'flex';
-  setTimeout(() => { toastNotice.style.display = 'none'; }, 4000);
-}
-
-// 6. DOM CONTROLLER
+// 6. INITIALIZATION & CONTROLLERS
 document.addEventListener('DOMContentLoaded', () => {
 
-  const themeToggleBtn = document.getElementById('themeToggleBtn');
+  const themeToggleBtns = document.querySelectorAll('.themeToggleBtn');
   const savedTheme = localStorage.getItem('theme');
   const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   
   if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
     document.body.classList.add('dark-theme');
-    if (themeToggleBtn) themeToggleBtn.innerHTML = '<i class="fa-solid fa-sun"></i> Light Mode';
+    themeToggleBtns.forEach(btn => btn.innerHTML = '<i class="fa-solid fa-sun"></i> Light Mode');
   }
 
-  if (themeToggleBtn) {
-    themeToggleBtn.addEventListener('click', () => {
+  themeToggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
       document.body.classList.toggle('dark-theme');
       const isDark = document.body.classList.contains('dark-theme');
       localStorage.setItem('theme', isDark ? 'dark' : 'light');
-      themeToggleBtn.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
+      themeToggleBtns.forEach(b => {
+        b.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
+      });
     });
-  }
+  });
 
   let isSignUpMode = false;
 
@@ -349,8 +489,9 @@ document.addEventListener('DOMContentLoaded', () => {
     forgotPasswordBtn: document.getElementById('forgotPasswordBtn'),
 
     navDrawer: document.getElementById('navDrawer'),
+    drawerOverlay: document.getElementById('drawerOverlay'),
     navBtns: document.querySelectorAll('.nav-btn'),
-    drawerCloseBtn: document.querySelector('#navDrawer .close-btn'),
+    drawerCloseBtn: document.getElementById('drawerCloseBtn'),
     
     profileNames: document.querySelectorAll('.profile-name'),
     profileEmails: document.querySelectorAll('.profile-email'),
@@ -364,13 +505,13 @@ document.addEventListener('DOMContentLoaded', () => {
     postText: document.getElementById('postText'),
     postPhotoInput: document.getElementById('postPhotoInput'),
     postFileInput: document.getElementById('postFileInput'),
-    postBtn: document.querySelector('.post-btn'),
+    postBtn: document.getElementById('createPostSubmitBtn'),
     postBox: document.getElementById('postBox'),
     feedContainer: document.getElementById('feedContainer'),
     fabBtn: document.getElementById('fabBtn'),
     backToTopBtn: document.getElementById('backToTopBtn'),
     toastNotice: document.getElementById('toastNotice'),
-    toastClose: document.querySelector('.toast-close'),
+    toastClose: document.getElementById('toastCloseBtn'),
 
     chatPopup: document.getElementById('chatPopup'),
     chatFriendName: document.getElementById('chatFriendName'),
@@ -393,6 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listenToAuthState();
     listenToPosts();
     listenToUsers();
+    switchTab('posts');
   }
 
   function listenToAuthState() {
@@ -414,14 +556,14 @@ document.addEventListener('DOMContentLoaded', () => {
           email: user.email,
           avatarUrl: userData.avatarUrl || user.photoURL || null
         };
+        
+        setupPresenceSystem(user);
         updateAuthView(true);
         listenToNotifications();
         listenToUserSocialData();
       } else {
         currentUser = null;
-        if (notifListener) notifListener();
-        if (friendsListener) friendsListener();
-        if (requestsListener) requestsListener();
+        detachUserListeners();
         updateAuthView(false);
       }
     });
@@ -429,13 +571,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function listenToUserSocialData() {
     if (!currentUser) return;
-    
-    friendsListener = onValue(ref(database, `friends/${currentUser.uid}`), (snap) => {
+
+    if (friendsRef && friendsCallback) off(friendsRef, 'value', friendsCallback);
+    friendsRef = ref(database, `friends/${currentUser.uid}`);
+    friendsCallback = (snap) => {
       friendsList = snap.exists() ? Object.keys(snap.val()) : [];
       renderUsersList();
-    });
+    };
+    onValue(friendsRef, friendsCallback);
 
-    requestsListener = onValue(ref(database, `friendRequests/${currentUser.uid}`), (snap) => {
+    if (requestsRef && requestsCallback) off(requestsRef, 'value', requestsCallback);
+    requestsRef = ref(database, `friendRequests/${currentUser.uid}`);
+    requestsCallback = (snap) => {
       pendingRequests = [];
       if (snap.exists()) {
         Object.keys(snap.val()).forEach(uid => {
@@ -443,16 +590,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       renderUsersList();
-    });
+    };
+    onValue(requestsRef, requestsCallback);
 
-    onValue(ref(database, `sentRequests/${currentUser.uid}`), (snap) => {
+    if (sentRequestsRef && sentRequestsCallback) off(sentRequestsRef, 'value', sentRequestsCallback);
+    sentRequestsRef = ref(database, `sentRequests/${currentUser.uid}`);
+    sentRequestsCallback = (snap) => {
       sentRequests = snap.exists() ? Object.keys(snap.val()) : [];
       renderUsersList();
-    });
+    };
+    onValue(sentRequestsRef, sentRequestsCallback);
   }
 
   function listenToUsers() {
-    onValue(ref(database, 'users'), (snapshot) => {
+    const usersQuery = query(ref(database, 'users'), limitToLast(100));
+
+    onValue(usersQuery, (snapshot) => {
       const data = snapshot.val();
       usersList = [];
       if (data) {
@@ -476,9 +629,9 @@ document.addEventListener('DOMContentLoaded', () => {
       chatsContainer.innerHTML = otherMembers.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No members registered yet.</p>' : otherMembers.map(u => `
         <div class="friend-item" style="cursor: pointer; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')">
           <div class="friend-user">
-            <div class="avatar-wrapper online">
+            <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
               <div class="avatar">${getInitials(u.displayName)}</div>
-              <div class="online-dot"></div>
+              <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
             <div>
               <strong style="font-size: 14px; display: block;">${escapeHTML(u.displayName || 'Member')}</strong>
@@ -521,9 +674,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
           <div class="friend-item" style="margin-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;">
             <div class="friend-user">
-              <div class="avatar-wrapper online">
+              <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
                 <div class="avatar">${getInitials(u.displayName)}</div>
-                <div class="online-dot"></div>
+                <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
               </div>
               <div>
                 <strong>${escapeHTML(u.displayName || 'Member')}</strong>
@@ -542,9 +695,9 @@ document.addEventListener('DOMContentLoaded', () => {
       sidebarContainer.innerHTML = addedFriends.length === 0 ? '<p style="color:#888; font-size:12px;">No added friends online yet.</p>' : addedFriends.slice(0, 5).map(u => `
         <div class="friend-item">
           <div class="friend-user">
-            <div class="avatar-wrapper online">
+            <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
               <div class="avatar">${getInitials(u.displayName)}</div>
-              <div class="online-dot"></div>
+              <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
             <span>${escapeHTML(u.displayName || 'Member')}</span>
           </div>
@@ -556,11 +709,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function listenToNotifications() {
     if (!currentUser) return;
-    const notifRef = ref(database, `notifications/${currentUser.uid}`);
     
-    if (notifListener) notifListener();
+    if (notifRef && notifCallback) off(notifRef, 'value', notifCallback);
 
-    notifListener = onValue(notifRef, (snapshot) => {
+    notifRef = ref(database, `notifications/${currentUser.uid}`);
+    notifCallback = (snapshot) => {
       const data = snapshot.val();
       const notifList = [];
       if (data) {
@@ -570,7 +723,9 @@ document.addEventListener('DOMContentLoaded', () => {
         notifList.sort((a, b) => b.createdAt - a.createdAt);
       }
       renderNotifications(notifList);
-    });
+    };
+
+    onValue(notifRef, notifCallback);
   }
 
   function renderNotifications(notifications) {
@@ -607,14 +762,14 @@ document.addEventListener('DOMContentLoaded', () => {
   async function markAllNotificationsRead() {
     if (!currentUser) return;
     try {
-      const notifRef = ref(database, `notifications/${currentUser.uid}`);
-      const snapshot = await get(notifRef);
+      const targetNotifRef = ref(database, `notifications/${currentUser.uid}`);
+      const snapshot = await get(targetNotifRef);
       if (snapshot.exists()) {
         const updates = {};
         Object.keys(snapshot.val()).forEach(key => {
           updates[`${key}/read`] = true;
         });
-        await update(notifRef, updates);
+        await update(targetNotifRef, updates);
         showToast('All notifications marked as read.');
       }
     } catch (err) {
@@ -623,8 +778,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function listenToPosts() {
-    const postsRef = ref(database, 'posts');
-    onValue(postsRef, (snapshot) => {
+    if (elements.feedContainer) {
+      elements.feedContainer.innerHTML = '<div class="spinner"></div>';
+    }
+
+    const postsQuery = query(ref(database, 'posts'), limitToLast(50));
+    
+    onValue(postsQuery, (snapshot) => {
       const data = snapshot.val();
       postsList = [];
       if (data) {
@@ -639,14 +799,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // FEATURE ENHANCEMENT 2: RICH MEDIA PREVIEWS (IMAGES, VIDEO, AUDIO)
   function setupPreviewContainers() {
     if (elements.postBox) {
       const previewDiv = document.createElement('div');
       previewDiv.id = 'postPreviewContainer';
       previewDiv.style.cssText = 'margin-top: 10px; display: none; position: relative;';
       previewDiv.innerHTML = `
-        <div style="position: relative; display: inline-block;">
+        <div style="position: relative; display: inline-block; max-width: 100%;">
           <img id="postPreviewImg" src="" style="max-height: 180px; max-width: 100%; border-radius: 8px; border: 1px solid #ddd; display: none;" />
+          <video id="postPreviewVid" controls style="max-height: 180px; max-width: 100%; border-radius: 8px; display: none;"></video>
+          <audio id="postPreviewAud" controls style="display: none; margin-top: 5px;"></audio>
           <div id="postPreviewFile" style="padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px; font-size: 12px; display: none;"></div>
           <button id="clearPostPreviewBtn" type="button" style="position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-size: 11px;"><i class="fa-solid fa-xmark"></i></button>
         </div>
@@ -731,7 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const user = userCredential.user;
         await updateProfile(user, { displayName: name });
         try {
-          await set(ref(database, `users/${user.uid}`), { displayName: name, email: email, uid: user.uid });
+          await update(ref(database, `users/${user.uid}`), { displayName: name, email: email, uid: user.uid, isOnline: true });
         } catch (dbErr) {
           console.warn("Database user set warning:", dbErr);
         }
@@ -760,6 +923,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function handleLogout() {
     if (confirm('Are you sure you want to log out?')) {
+      if (currentUser) {
+        await set(ref(database, `users/${currentUser.uid}/isOnline`), false);
+        await set(ref(database, `users/${currentUser.uid}/lastSeen`), serverTimestamp());
+      }
+      detachUserListeners();
       await signOut(auth);
     }
   }
@@ -796,8 +964,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const nameInput = document.getElementById('settingsNameInput');
     const emailInput = document.getElementById('settingsEmailInput');
-    if (nameInput) nameInput.value = currentUser.name;
-    if (emailInput) emailInput.value = currentUser.email;
+    if (nameInput) nameInput.value = currentUser.name || '';
+    if (emailInput) emailInput.value = currentUser.email || '';
   }
 
   function renderFeed(filterQuery = '') {
@@ -820,7 +988,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     elements.feedContainer.innerHTML = displayPosts.map(post => {
-      const isImage = post.attachmentType === 'image';
       const isOwner = currentUser && (currentUser.uid === post.uid || currentUser.email === post.authorEmail);
       
       const likesCount = post.likes ? Object.keys(post.likes).length : 0;
@@ -831,6 +998,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const commentsArray = post.comments ? Object.values(post.comments) : [];
 
+      let attachmentHTML = '';
+      if (post.attachment) {
+        const type = post.attachmentType || '';
+        if (type === 'image') {
+          attachmentHTML = `
+            <div class="media-attachment-container">
+              <img src="${escapeHTML(post.attachment)}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
+            </div>`;
+        } else if (type === 'video') {
+          attachmentHTML = `
+            <div class="media-attachment-container">
+              <video src="${escapeHTML(post.attachment)}" controls style="max-height: 400px; width: 100%;"></video>
+            </div>`;
+        } else if (type === 'audio') {
+          attachmentHTML = `
+            <div class="media-attachment-container" style="background: transparent;">
+              <audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio>
+            </div>`;
+        } else {
+          attachmentHTML = `
+            <div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
+              <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${escapeHTML(post.attachment)}" target="_blank" style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
+            </div>`;
+        }
+      }
+
       return `
         <div class="card post-card" data-id="${post.id}">
           <div class="animated-stripe-bar"></div>
@@ -840,12 +1033,15 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="avatar-wrapper"><div class="avatar">${escapeHTML(post.initials || 'SY')}</div></div>
               <div>
                 <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Anonymous')}</strong>
-                <span style="font-size: 11px; color: #888;">${escapeHTML(post.time || 'Recently')}</span>
+                <span style="font-size: 11px; color: #888;">${escapeHTML(post.time || 'Recently')} ${post.isEdited ? '<i style="font-size:10px;">(edited)</i>' : ''}</span>
               </div>
             </div>
             
             ${isOwner ? `
               <div style="display: flex; gap: 8px; align-items: center;">
+                <button onclick="toggleEditPost('${post.id}')" style="background: none; border: none; color: var(--text-color); opacity: 0.7; cursor: pointer; font-size: 13px;" title="Edit Post">
+                  <i class="fa-solid fa-pen-to-square"></i>
+                </button>
                 <button onclick="deletePost('${post.id}')" style="background: none; border: none; color: #e50914; cursor: pointer; font-size: 14px;" title="Delete Post">
                   <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -855,15 +1051,15 @@ document.addEventListener('DOMContentLoaded', () => {
           
           ${post.content ? `<p id="postContent-${post.id}" style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>` : ''}
           
-          ${post.attachment ? (
-            isImage ? 
-              `<div style="margin-bottom: 12px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); background: #000;">
-                <img src="${escapeHTML(post.attachment)}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
-               </div>` : 
-              `<div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
-                <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${escapeHTML(post.attachment)}" target="_blank" style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
-               </div>`
-          ) : ''}
+          <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 12px;">
+            <textarea id="editPostInput-${post.id}" style="width: 100%; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; font-size: 13px; background: var(--card-bg); color: var(--text-color); resize: vertical;">${escapeHTML(post.content || '')}</textarea>
+            <div style="display: flex; gap: 8px; margin-top: 6px; justify-content: flex-end;">
+              <button onclick="toggleEditPost('${post.id}')" style="padding: 4px 10px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px; cursor: pointer; color: var(--text-color);">Cancel</button>
+              <button onclick="saveEditPost('${post.id}')" style="padding: 4px 12px; background: var(--color-red); color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer;">Save</button>
+            </div>
+          </div>
+
+          ${attachmentHTML}
           
           <div style="display: flex; gap: 15px; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 10px; font-size: 13px; align-items: center;">
             <button onclick="toggleLike('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${isLiked ? '#e50914' : 'inherit'};">
@@ -897,8 +1093,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function handleCreatePost() {
-    const content = elements.postText.value.trim();
+    const content = elements.postText ? elements.postText.value.trim() : '';
     if (!content && !currentPostFile) return;
+
+    if (elements.postBtn) {
+      elements.postBtn.disabled = true;
+      elements.postBtn.textContent = 'Posting...';
+    }
 
     let attachmentUrl = null;
     let attachmentType = null;
@@ -906,7 +1107,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentPostFile) {
       showToast('Uploading attachment...');
       attachmentUrl = await uploadMediaFile(currentPostFile, 'post_attachments');
-      attachmentType = currentPostFile.type.startsWith('image/') ? 'image' : 'file';
+      if (currentPostFile.type.startsWith('image/')) attachmentType = 'image';
+      else if (currentPostFile.type.startsWith('video/')) attachmentType = 'video';
+      else if (currentPostFile.type.startsWith('audio/')) attachmentType = 'audio';
+      else attachmentType = 'file';
     }
 
     const newPost = {
@@ -927,25 +1131,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       await push(ref(database, 'posts'), newPost);
-      elements.postText.value = '';
-      if (elements.postPhotoInput) elements.postPhotoInput.value = '';
-      if (elements.postFileInput) elements.postFileInput.value = '';
+      if (elements.postText) elements.postText.value = '';
       clearPostPreview();
       showToast('Post published successfully!');
     } catch (err) {
       console.error("Failed to create post:", err);
       showToast('Failed to create post. Please try again.');
+    } finally {
+      if (elements.postBtn) {
+        elements.postBtn.disabled = false;
+        elements.postBtn.textContent = 'Post';
+      }
     }
   }
 
   function clearPostPreview() {
     currentPostFile = null;
+    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
+    if (elements.postFileInput) elements.postFileInput.value = '';
+    
     const container = document.getElementById('postPreviewContainer');
     const img = document.getElementById('postPreviewImg');
+    const vid = document.getElementById('postPreviewVid');
+    const aud = document.getElementById('postPreviewAud');
     const fileTxt = document.getElementById('postPreviewFile');
     
     if (container) container.style.display = 'none';
     if (img) { img.src = ''; img.style.display = 'none'; }
+    if (vid) { vid.src = ''; vid.style.display = 'none'; }
+    if (aud) { aud.src = ''; aud.style.display = 'none'; }
     if (fileTxt) { fileTxt.textContent = ''; fileTxt.style.display = 'none'; }
   }
 
@@ -982,22 +1196,34 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function switchTab(targetTab) {
-    if (elements.navDrawer) elements.navDrawer.classList.remove('open');
+    closeDrawer();
 
     elements.tabViews.forEach(view => view.classList.add('hidden'));
     const activeView = document.getElementById(`${targetTab}View`);
     if (activeView) activeView.classList.remove('hidden');
 
     elements.tabBtns.forEach(btn => {
-      if (btn.getAttribute('data-tab') === targetTab) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-      }
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === targetTab);
+    });
+
+    document.querySelectorAll('.nav-link-item').forEach(link => {
+      link.classList.toggle('active', link.getAttribute('data-tab') === targetTab);
     });
   }
 
   function bindEvents() {
+    if (elements.callBtn) {
+      elements.callBtn.addEventListener('click', () => {
+        showToast("Voice call capability coming soon!");
+      });
+    }
+
+    if (elements.videoBtn) {
+      elements.videoBtn.addEventListener('click', () => {
+        showToast("Video call capability coming soon!");
+      });
+    }
+
     const markAllReadBtn = document.getElementById('markAllReadBtn');
     if (markAllReadBtn) {
       markAllReadBtn.addEventListener('click', markAllNotificationsRead);
@@ -1059,12 +1285,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (elements.navBtns) {
       elements.navBtns.forEach(btn => {
-        btn.addEventListener('click', () => elements.navDrawer?.classList.add('open'));
+        btn.addEventListener('click', () => {
+          elements.navDrawer?.classList.add('open');
+          elements.drawerOverlay?.classList.add('active');
+        });
       });
     }
 
     if (elements.drawerCloseBtn) {
-      elements.drawerCloseBtn.addEventListener('click', () => elements.navDrawer?.classList.remove('open'));
+      elements.drawerCloseBtn.addEventListener('click', closeDrawer);
+    }
+
+    if (elements.drawerOverlay) {
+      elements.drawerOverlay.addEventListener('click', closeDrawer);
     }
 
     if (elements.searchInput) {
@@ -1079,40 +1312,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (elements.postPhotoInput) {
       elements.postPhotoInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (file) {
           currentPostFile = file;
 
           const container = document.getElementById('postPreviewContainer');
           const img = document.getElementById('postPreviewImg');
+          const vid = document.getElementById('postPreviewVid');
+          const aud = document.getElementById('postPreviewAud');
           const fileTxt = document.getElementById('postPreviewFile');
 
-          if (container && img && fileTxt) {
+          if (container) {
             container.style.display = 'block';
-            img.src = URL.createObjectURL(file);
-            img.style.display = 'block';
-            fileTxt.style.display = 'none';
+            if (img) img.style.display = 'none';
+            if (vid) vid.style.display = 'none';
+            if (aud) aud.style.display = 'none';
+            if (fileTxt) fileTxt.style.display = 'none';
+
+            const url = URL.createObjectURL(file);
+            if (file.type.startsWith('image/') && img) {
+              img.src = url;
+              img.style.display = 'block';
+            } else if (file.type.startsWith('video/') && vid) {
+              vid.src = url;
+              vid.style.display = 'block';
+            } else if (file.type.startsWith('audio/') && aud) {
+              aud.src = url;
+              aud.style.display = 'block';
+            } else if (fileTxt) {
+              fileTxt.textContent = `Attached File: ${file.name}`;
+              fileTxt.style.display = 'block';
+            }
           }
+        } else {
+          clearPostPreview();
         }
       });
     }
 
     if (elements.postFileInput) {
       elements.postFileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (file) {
           currentPostFile = file;
 
           const container = document.getElementById('postPreviewContainer');
-          const img = document.getElementById('postPreviewImg');
           const fileTxt = document.getElementById('postPreviewFile');
 
-          if (container && img && fileTxt) {
+          if (container && fileTxt) {
             container.style.display = 'block';
-            img.style.display = 'none';
             fileTxt.textContent = `Attached File: ${file.name}`;
             fileTxt.style.display = 'block';
           }
+        } else {
+          clearPostPreview();
         }
       });
     }
@@ -1120,17 +1373,24 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('click', (e) => {
       if (e.target.closest('#clearPostPreviewBtn')) {
         clearPostPreview();
-        if (elements.postPhotoInput) elements.postPhotoInput.value = '';
-        if (elements.postFileInput) elements.postFileInput.value = '';
       }
       if (e.target.closest('#clearChatPreviewBtn')) {
         clearChatPreview();
+      }
+
+      const navLink = e.target.closest('.nav-link-item');
+      if (navLink) {
+        e.preventDefault();
+        const targetTab = navLink.getAttribute('data-tab');
+        if (targetTab) {
+          switchTab(targetTab);
+        }
       }
     });
 
     if (elements.chatFileInput) {
       elements.chatFileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (file) {
           currentChatFile = file;
 
@@ -1141,6 +1401,8 @@ document.addEventListener('DOMContentLoaded', () => {
             container.style.display = 'flex';
             previewText.textContent = `Attached: ${file.name}`;
           }
+        } else {
+          clearChatPreview();
         }
       });
     }
@@ -1149,6 +1411,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (elements.fabBtn) {
       elements.fabBtn.addEventListener('click', () => {
+        switchTab('posts');
         if (elements.postText) {
           elements.postText.focus();
           elements.postText.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1179,7 +1442,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (elements.chatCloseBtn) {
       elements.chatCloseBtn.addEventListener('click', () => {
         elements.chatPopup.classList.add('hidden');
-        if (activeChatListener) activeChatListener();
+        if (activeChatRef && activeChatCallback) {
+          off(activeChatRef, 'value', activeChatCallback);
+        }
       });
     }
 
@@ -1192,19 +1457,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') sendChatMessage();
       });
     }
-    
-    if (elements.callBtn) {
-      elements.callBtn.addEventListener('click', () => showToast('Voice calling feature coming soon!'));
-    }
-    
-    if (elements.videoBtn) {
-      elements.videoBtn.addEventListener('click', () => showToast('Video calling feature coming soon!'));
-    }
 
     const profilePicInput = document.getElementById('profilePicInput');
     if (profilePicInput) {
       profilePicInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (file) {
           uploadedAvatarFile = file;
           const previewEl = document.getElementById('settingsAvatarPreview');
@@ -1221,7 +1478,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     if (saveSettingsBtn) {
       saveSettingsBtn.addEventListener('click', async () => {
-        const newName = document.getElementById('settingsNameInput').value.trim();
+        const nameInput = document.getElementById('settingsNameInput');
+        const newName = nameInput ? nameInput.value.trim() : '';
         
         if (currentUser && auth.currentUser) {
           const updates = {};
@@ -1246,6 +1504,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await updateProfile(auth.currentUser, authUpdates);
             await update(ref(database, `users/${currentUser.uid}`), updates);
             if (newName) currentUser.name = newName;
+            uploadedAvatarFile = null;
             updateUserUI();
             showToast('Settings updated!');
           } catch (err) {
@@ -1255,14 +1514,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
     }
-
-    document.querySelectorAll('.nav-link-item').forEach(link => {
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        const targetTab = link.getAttribute('data-tab');
-        switchTab(targetTab);
-      });
-    });
     
     elements.tabBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {

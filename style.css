@@ -50,6 +50,25 @@ body {
   display: none !important;
 }
 
+/* Drawer Backdrop Overlay */
+.drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.drawer-overlay.active {
+  display: block;
+  opacity: 1;
+}
+
 /* Background Ambient Blobs */
 .ambient-blob {
   position: fixed;
@@ -178,6 +197,15 @@ header {
   letter-spacing: 0.5px;
 }
 
+/* Centered Header Navigation Buttons */
+.nav-buttons {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
+}
+
 .nav-btn {
   background: none;
   border: none;
@@ -205,6 +233,7 @@ header {
   align-items: stretch;
   gap: 10px;
   width: 100%;
+  flex-wrap: wrap;
 }
 
 .search-bar-wrap {
@@ -215,7 +244,7 @@ header {
   overflow: hidden;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
   display: flex;
-  flex: 1;
+  flex: 1 1 200px;
   align-items: center;
 }
 
@@ -244,6 +273,7 @@ header {
   transition: background 0.2s ease, transform 0.1s ease;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
   white-space: nowrap;
+  min-height: 38px;
 }
 
 .search-action-btn:hover {
@@ -299,25 +329,35 @@ header {
   display: none;
 }
 
-/* Navigation Action Tabs (CENTERED ONLY) */
+/* Navigation Action Tabs */
 .action-tabs {
   display: flex;
   justify-content: center;
-  gap: 10px;
-  padding: 5px 15px;
+  gap: 8px;
+  padding: 8px 10px;
   margin-bottom: 15px;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.action-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab-btn {
   background: transparent;
   border: none;
   font-weight: bold;
-  font-size: 14px;
+  font-size: 13px;
   color: #888;
-  padding: 8px 15px;
+  padding: 8px 12px;
   cursor: pointer;
   border-bottom: 3px solid transparent;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .tab-btn:hover {
@@ -329,7 +369,12 @@ header {
   border-bottom-color: var(--color-red);
 }
 
-/* Profiles & User Badges (Red Ring Highlights ONLY when Online) */
+.tab-btn .badge {
+  float: none;
+  margin-left: 4px;
+}
+
+/* Profiles & User Badges */
 .user-profile {
   display: flex;
   align-items: center;
@@ -368,8 +413,7 @@ header {
   transition: border-color 0.2s ease;
 }
 
-.avatar-wrapper.online,
-.avatar-wrapper:has(.online-dot) {
+.avatar-wrapper.online {
   border-color: var(--color-red);
 }
 
@@ -379,9 +423,13 @@ header {
   right: 0;
   width: 9px;
   height: 9px;
-  background-color: #2ec4b6;
+  background-color: #777;
   border: 2px solid var(--card-bg);
   border-radius: 50%;
+}
+
+.online-dot.active {
+  background-color: #2ec4b6;
 }
 
 .profile-avatar, .avatar {
@@ -406,6 +454,21 @@ header {
 
 .profile-avatar.online {
   border-color: var(--color-red);
+}
+
+/* Media Attachments */
+.media-attachment-container {
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: #000;
+}
+
+.media-attachment-container video,
+.media-attachment-container audio {
+  width: 100%;
+  display: block;
 }
 
 /* Create Post Form */
@@ -454,6 +517,11 @@ header {
   border-radius: 6px;
   font-weight: bold;
   cursor: pointer;
+}
+
+.post-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .clear { clear: both; }
@@ -592,6 +660,13 @@ header {
   align-self: flex-end;
 }
 
+.chat-msg.incoming {
+  background: var(--card-bg);
+  color: var(--text-color);
+  align-self: flex-start;
+  border: 1px solid var(--border-color);
+}
+
 .chat-input-row {
   display: flex;
   align-items: center;
@@ -710,6 +785,22 @@ header {
   object-fit: contain;
 }
 
+/* Spinner Loader */
+.spinner {
+  border: 4px solid var(--border-color);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border-left-color: var(--color-red);
+  animation: spin 1s linear infinite;
+  margin: 20px auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 /* Mobile & Tablet Media Queries */
 @media (max-width: 900px) {
   .container {
@@ -736,4 +827,12 @@ header {
     right: 10px;
     bottom: 10px;
   }
+}
+
+/* Active Sidebar Navigation Item */
+.drawer-menu a.nav-link-item.active {
+  color: var(--color-red);
+  font-weight: bold;
+  border-left: 3px solid var(--color-red);
+  padding-left: 8px;
 }

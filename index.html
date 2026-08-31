@@ -47,23 +47,25 @@
     </div>
   </div>
 
-  <!-- MAIN APP CONTENT (HIDDEN BY DEFAULT UNTIL LOGIN) -->
+  <!-- MAIN APP CONTENT -->
   <div id="appContent" class="hidden">
 
+    <div class="drawer-overlay" id="drawerOverlay"></div>
+
     <div class="floating-toast" id="toastNotice">
-      <span>🔥 <strong>Live Update:</strong> Youth Leadership event starts at 3 PM!</span>
-      <span class="toast-close"><i class="fa-solid fa-xmark"></i></span>
+      <span></span>
+      <span class="toast-close" id="toastCloseBtn"><i class="fa-solid fa-xmark"></i></span>
     </div>
 
-    <button class="fab-btn" id="fabBtn" title="Quick Post"><i class="fa-solid fa-bolt"></i></button>
-    <button class="back-to-top-btn hidden" id="backToTopBtn" title="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
+    <button class="fab-btn" id="fabBtn" title="Quick Post" aria-label="Quick Post"><i class="fa-solid fa-bolt"></i></button>
+    <button class="back-to-top-btn hidden" id="backToTopBtn" title="Back to top" aria-label="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
 
     <aside class="nav-drawer" id="navDrawer">
       <div class="drawer-header">
         <div class="logo">
           <img src="logo.png" alt="Soroti Youths Forum Logo" class="header-logo-img">
         </div>
-        <button class="close-btn"><i class="fa-solid fa-xmark"></i></button>
+        <button class="close-btn" id="drawerCloseBtn" aria-label="Close navigation"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="drawer-menu">
         <div class="user-profile drawer-user-info" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
@@ -75,11 +77,11 @@
         </div>
         <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
         <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge notif-badge">0</span></a>
-        <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
+        <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages</a>
         <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
         <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
         
-        <button id="themeToggleBtn" title="Toggle Dark/Light Mode" style="margin-top: 15px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #ddd; background: transparent; cursor: pointer; color: var(--text-color); font-weight: bold;"><i class="fa-solid fa-moon"></i> Dark Mode</button>
+        <button class="themeToggleBtn" title="Toggle Dark/Light Mode" style="margin-top: 15px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: transparent; cursor: pointer; color: var(--text-color); font-weight: bold;"><i class="fa-solid fa-moon"></i> Dark Mode</button>
         <button class="logout-btn" style="margin-top: 10px; width: 100%;"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
       </div>
     </aside>
@@ -87,7 +89,7 @@
     <header>
       <div class="top-bar">
         <div class="nav-left">
-          <button class="nav-btn" title="Open Navigation"><i class="fa-solid fa-bars"></i></button>
+          <button class="nav-btn" title="Open Navigation" aria-label="Open Navigation"><i class="fa-solid fa-bars"></i></button>
           <div class="logo">
             <img src="logo.png" alt="Soroti Youths Forum Logo" class="header-logo-img">
           </div>
@@ -118,10 +120,8 @@
         <div class="card drawer-menu">
           <div class="animated-stripe-bar"></div>
           <a href="#" class="nav-link-item" data-tab="posts"><i class="fa-solid fa-house"></i> Home Feed</a>
-          <a href="#" class="nav-link-item" data-tab="notifications"><i class="fa-solid fa-bell"></i> Notifications <span class="badge notif-badge">0</span></a>
-          <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages <span class="badge">1</span></a>
+          <a href="#" class="nav-link-item" data-tab="chats"><i class="fa-solid fa-comment-dots"></i> Messages</a>
           <a href="#" class="nav-link-item" data-tab="friends"><i class="fa-solid fa-users"></i> Find Friends</a>
-          <a href="#" class="nav-link-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Settings</a>
         </div>
       </div>
 
@@ -148,7 +148,7 @@
                   <i class="fa-solid fa-paperclip"></i> File <input type="file" id="postFileInput" style="display: none;" />
                 </label>
               </div>
-              <button class="post-btn">Post</button>
+              <button class="post-btn" id="createPostSubmitBtn">Post</button>
             </div>
             <div class="clear"></div>
           </div>
@@ -196,7 +196,7 @@
                   <i class="fa-solid fa-camera"></i> Change Photo
                   <input type="file" id="profilePicInput" accept="image/*" style="display: none;" />
                 </label>
-                <span style="display: block; font-size: 11px; opacity: 0.6; margin-top: 4px;">JPG, PNG, or GIF</span>
+                <span style="display: block; font-size: 11px; opacity: 0.6; margin-top: 4px;">JPG, PNG, or GIF (Max 5MB)</span>
               </div>
             </div>
 
@@ -239,9 +239,9 @@
       <div class="chat-header">
         <span id="chatFriendName">Chat</span>
         <div class="chat-actions">
-          <button class="action-icon call-btn" title="Voice Call"><i class="fa-solid fa-phone"></i></button>
-          <button class="action-icon video-btn" title="Video Call"><i class="fa-solid fa-video"></i></button>
-          <button class="action-icon close-btn" id="chatCloseBtn"><i class="fa-solid fa-xmark"></i></button>
+          <button class="action-icon call-btn" title="Voice Call" aria-label="Voice Call"><i class="fa-solid fa-phone"></i></button>
+          <button class="action-icon video-btn" title="Video Call" aria-label="Video Call"><i class="fa-solid fa-video"></i></button>
+          <button class="action-icon close-btn" id="chatCloseBtn" aria-label="Close Chat"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
       <div class="chat-messages" id="chatMessages"></div>
@@ -252,7 +252,7 @@
           <input type="file" id="chatFileInput" style="display: none;" />
         </label>
         <input type="text" id="chatInput" placeholder="Type a message..." />
-        <button id="chatSendBtn"><i class="fa-solid fa-paper-plane"></i></button>
+        <button id="chatSendBtn" aria-label="Send Message"><i class="fa-solid fa-paper-plane"></i></button>
       </div>
     </div>
 
