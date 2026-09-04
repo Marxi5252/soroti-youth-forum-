@@ -58,6 +58,10 @@ let currentUser = null;
 let postsLimit = 25;
 let currentPostsQueryRef = null;
 
+// Modal Pagination & User State
+let modalCurrentUid = null;
+let modalPostsLimit = 5;
+
 let activeChatRoom = null;
 let activeChatRecipientUid = null;
 let activeChatRecipientName = null;
@@ -81,7 +85,6 @@ let connectedCallback = null;
 
 let currentPostFile = null;
 let currentChatFile = null;
-let uploadedAvatarFile = null;
 let currentCallStream = null;
 
 let typingTimeout = null;
@@ -174,6 +177,19 @@ function escapeHTML(str) {
   }[tag] || tag));
 }
 
+function applyAvatarStyle(element, avatarUrl, name) {
+  if (!element) return;
+  if (avatarUrl) {
+    element.style.backgroundImage = `url("${avatarUrl}")`;
+    element.style.backgroundSize = 'cover';
+    element.style.backgroundPosition = 'center';
+    element.textContent = '';
+  } else {
+    element.style.backgroundImage = 'none';
+    element.textContent = getInitials(name);
+  }
+}
+
 export async function sendNotification(targetUid, title, message, icon = 'fa-bell') {
   if (!targetUid) return;
   try {
@@ -200,8 +216,9 @@ function triggerDesktopPush(title, body) {
 
 function showToast(message) {
   const toastNotice = document.getElementById('toastNotice');
-  if (!toastNotice) return;
-  toastNotice.querySelector('span').innerHTML = message;
+  const toastText = document.getElementById('toastMsgText');
+  if (!toastNotice || !toastText) return;
+  toastText.innerHTML = message;
   toastNotice.style.display = 'flex';
   setTimeout(() => { toastNotice.style.display = 'none'; }, 4000);
 }
@@ -257,6 +274,36 @@ function closeDrawer() {
 }
 
 // 5. GLOBAL INTERACTIVE WINDOW FUNCTIONS
+
+// LIGHTBOX PHOTO VIEWER
+window.openAvatarLightbox = function(avatarUrl, userName) {
+  const lightboxModal = document.getElementById('avatarLightboxModal');
+  const lightboxImg = document.getElementById('lightboxImg');
+  const lightboxFallback = document.getElementById('lightboxFallbackAvatar');
+  const lightboxName = document.getElementById('lightboxUserName');
+
+  if (!lightboxModal) return;
+
+  if (lightboxName) lightboxName.textContent = `${userName || 'Member'}'s Profile Picture`;
+
+  if (avatarUrl) {
+    if (lightboxImg) {
+      lightboxImg.src = avatarUrl;
+      lightboxImg.classList.remove('hidden');
+    }
+    if (lightboxFallback) lightboxFallback.classList.add('hidden');
+  } else {
+    if (lightboxImg) lightboxImg.classList.add('hidden');
+    if (lightboxFallback) {
+      lightboxFallback.classList.remove('hidden');
+      lightboxFallback.style.backgroundImage = 'none';
+      lightboxFallback.textContent = getInitials(userName);
+    }
+  }
+
+  lightboxModal.classList.remove('hidden');
+};
+
 window.toggleBookmark = async function(button, postId) {
   if (!currentUser) {
     showToast("Please log in to bookmark posts.");
@@ -331,8 +378,55 @@ window.markMessagesRead = async function(chatRoomId) {
   }
 };
 
+function renderModalUserPosts() {
+  const container = document.getElementById('modalUserPostsContainer');
+  const badge = document.getElementById('modalPostsCountBadge');
+  if (!container) return;
+
+  const userPosts = postsList.filter(p => p.uid === modalCurrentUid);
+  if (badge) badge.textContent = `${userPosts.length} posts`;
+
+  if (userPosts.length === 0) {
+    container.innerHTML = `<div style="text-align: center; color: #888; font-size: 13px; padding: 15px 0;">No posts shared yet.</div>`;
+    return;
+  }
+
+  const visiblePosts = userPosts.slice(0, modalPostsLimit);
+
+  container.innerHTML = visiblePosts.map(post => {
+    const displayTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
+    let attachmentHTML = '';
+    if (post.attachment) {
+      const type = post.attachmentType || '';
+      if (type === 'image') {
+        attachmentHTML = `<img src="${escapeHTML(post.attachment)}" style="width: 100%; max-height: 180px; object-fit: cover; border-radius: 6px; margin-top: 6px;" />`;
+      } else if (type === 'video') {
+        attachmentHTML = `<video src="${escapeHTML(post.attachment)}" controls style="width: 100%; max-height: 180px; border-radius: 6px; margin-top: 6px;"></video>`;
+      }
+    }
+
+    return `
+      <div class="modal-post-item" style="background: var(--item-hover-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin-bottom: 8px; text-align: left;">
+        <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;"><i class="fa-regular fa-clock"></i> ${escapeHTML(displayTime)}</div>
+        ${post.content ? `<p style="font-size: 13px; line-height: 1.4; margin: 0;">${escapeHTML(post.content)}</p>` : ''}
+        ${attachmentHTML}
+      </div>
+    `;
+  }).join('');
+
+  if (modalPostsLimit < userPosts.length) {
+    container.innerHTML += `<div style="text-align: center; font-size: 11px; color: #888; padding: 8px 0;"><i class="fa-solid fa-spinner fa-spin"></i> Scroll down to load more...</div>`;
+  }
+}
+
+// OPEN USER PROFILE MODAL
 window.openUserProfile = function(uid) {
-  const user = usersList.find(u => u.uid === uid);
+  let user = usersList.find(u => u.uid === uid);
+  
+  if (!user && currentUser && currentUser.uid === uid) {
+    user = currentUser;
+  }
+
   if (!user) return;
 
   const modal = document.getElementById('profileModal');
@@ -343,18 +437,16 @@ window.openUserProfile = function(uid) {
   const postCountEl = document.getElementById('modalProfilePostCount');
   const actionsEl = document.getElementById('modalProfileActions');
 
-  if (nameEl) nameEl.textContent = user.displayName || 'Member';
+  const displayName = user.displayName || user.name || 'Member';
+
+  if (nameEl) nameEl.textContent = displayName;
   if (emailEl) emailEl.textContent = user.email || '';
+  
+  applyAvatarStyle(avatarEl, user.avatarUrl, displayName);
+
+  // Attach Lightbox Zoom Click on Modal Avatar Image
   if (avatarEl) {
-    if (user.avatarUrl) {
-      avatarEl.style.backgroundImage = `url("${user.avatarUrl}")`;
-      avatarEl.style.backgroundSize = 'cover';
-      avatarEl.style.backgroundPosition = 'center';
-      avatarEl.textContent = '';
-    } else {
-      avatarEl.style.backgroundImage = 'none';
-      avatarEl.textContent = getInitials(user.displayName);
-    }
+    avatarEl.onclick = () => window.openAvatarLightbox(user.avatarUrl, displayName);
   }
 
   if (statusEl) {
@@ -368,14 +460,32 @@ window.openUserProfile = function(uid) {
   if (actionsEl && currentUser) {
     if (currentUser.uid !== uid) {
       const isFriend = friendsList.includes(uid);
+      const isSent = sentRequests.includes(uid);
+      const pendingReq = pendingRequests.find(req => req.uid === uid);
+
+      let actionBtn = `<button class="chat-btn" onclick="sendFriendRequest('${uid}')"><i class="fa-solid fa-user-plus"></i> Add Friend</button>`;
+      if (isFriend) {
+        actionBtn = `<button class="chat-btn" onclick="removeFriend('${uid}')"><i class="fa-solid fa-user-minus"></i> Unfriend</button>`;
+      } else if (pendingReq) {
+        actionBtn = `<button class="chat-btn" style="background: var(--color-red); color: white;" onclick="acceptFriendRequest('${uid}', '${escapeHTML(pendingReq.fromName)}')"><i class="fa-solid fa-user-check"></i> Accept Request</button>`;
+      } else if (isSent) {
+        actionBtn = `<button class="chat-btn" disabled style="opacity: 0.6;"><i class="fa-solid fa-clock"></i> Request Sent</button>`;
+      }
+
       actionsEl.innerHTML = `
-        <button class="chat-btn" style="background: var(--color-red); color: white; padding: 8px 16px;" onclick="openChatFromTab('${uid}', '${escapeHTML(user.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i> Message</button>
-        ${isFriend ? `<button class="chat-btn" onclick="removeFriend('${uid}')"><i class="fa-solid fa-user-minus"></i> Unfriend</button>` : `<button class="chat-btn" onclick="sendFriendRequest('${uid}')"><i class="fa-solid fa-user-plus"></i> Add Friend</button>`}
+        <button class="chat-btn" style="background: var(--color-red); color: white; padding: 8px 16px;" onclick="openChatFromTab('${uid}', '${escapeHTML(displayName)}')"><i class="fa-solid fa-comment"></i> Send Message</button>
+        ${actionBtn}
       `;
     } else {
-      actionsEl.innerHTML = `<span style="font-size: 12px; opacity: 0.7;">This is your profile</span>`;
+      actionsEl.innerHTML = `
+        <button class="chat-btn" style="background: var(--color-red); color: white; padding: 8px 16px;" onclick="document.getElementById('profileModal').classList.add('hidden'); switchTab('settings');"><i class="fa-solid fa-camera"></i> Change Custom Picture</button>
+      `;
     }
   }
+
+  modalCurrentUid = uid;
+  modalPostsLimit = 5;
+  renderModalUserPosts();
 
   if (modal) modal.classList.remove('hidden');
 };
@@ -443,6 +553,7 @@ window.sendFriendRequest = async function(targetUid) {
     await set(ref(database, `sentRequests/${currentUser.uid}/${targetUid}`), true);
     sendNotification(targetUid, currentUser.name, 'sent you a friend request.', 'fa-user-plus');
     showToast('Friend request sent!');
+    if (modalCurrentUid === targetUid) window.openUserProfile(targetUid);
   } catch (err) {
     console.error("Failed to send friend request:", err);
   }
@@ -460,6 +571,7 @@ window.acceptFriendRequest = async function(senderUid, senderName) {
     await update(ref(database), updates);
     sendNotification(senderUid, currentUser.name, 'accepted your friend request.', 'fa-user-check');
     showToast(`You are now friends with ${senderName}`);
+    if (modalCurrentUid === senderUid) window.openUserProfile(senderUid);
   } catch (err) {
     console.error("Failed to accept request:", err);
   }
@@ -473,6 +585,7 @@ window.removeFriend = async function(friendUid) {
     updates[`friends/${friendUid}/${currentUser.uid}`] = null;
     await update(ref(database), updates);
     showToast('Friend removed.');
+    if (modalCurrentUid === friendUid) window.openUserProfile(friendUid);
   } catch (err) {
     console.error("Failed to remove friend:", err);
   }
@@ -542,6 +655,8 @@ window.addComment = async function(id) {
       
       await push(commentsRef, {
         author: currentUser ? currentUser.name : 'Anonymous',
+        uid: currentUser ? currentUser.uid : null,
+        authorAvatarUrl: currentUser ? currentUser.avatarUrl : null,
         text: input.value.trim(),
         createdAt: Date.now()
       });
@@ -697,7 +812,21 @@ window.openChat = function(recipientUid, recipientName) {
 };
 
 window.openChatFromTab = function(friendUid, friendName) {
+  document.getElementById('profileModal')?.classList.add('hidden');
   window.openChat(friendUid, friendName);
+};
+
+window.switchTab = function(tabName) {
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabViews = document.querySelectorAll('.tab-view');
+  
+  tabBtns.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+  tabViews.forEach(view => {
+    if (view.id === `${tabName}View`) view.classList.remove('hidden');
+    else view.classList.add('hidden');
+  });
 };
 
 // 6. INITIALIZATION & CONTROLLERS
@@ -732,12 +861,20 @@ document.addEventListener('DOMContentLoaded', () => {
     tabLoginBtn: document.getElementById('tabLoginBtn'),
     tabSignupBtn: document.getElementById('tabSignupBtn'),
     fullNameGroup: document.getElementById('fullNameGroup'),
+    phoneGroup: document.getElementById('phoneGroup'),
+    districtGroup: document.getElementById('districtGroup'),
+    villageGroup: document.getElementById('villageGroup'),
     pageAuthName: document.getElementById('pageAuthName'),
+    pageAuthPhone: document.getElementById('pageAuthPhone'),
+    pageAuthDistrict: document.getElementById('pageAuthDistrict'),
+    pageAuthVillage: document.getElementById('pageAuthVillage'),
     pageAuthEmail: document.getElementById('pageAuthEmail'),
     pageAuthPassword: document.getElementById('pageAuthPassword'),
     pageAuthSubmitBtn: document.getElementById('pageAuthSubmitBtn'),
     authErrorMsg: document.getElementById('authErrorMsg'),
     forgotPasswordBtn: document.getElementById('forgotPasswordBtn'),
+    forgotPasswordWrapper: document.getElementById('forgotPasswordWrapper'),
+    authSwitchPrompt: document.getElementById('authSwitchPrompt'),
 
     navDrawer: document.getElementById('navDrawer'),
     drawerOverlay: document.getElementById('drawerOverlay'),
@@ -786,7 +923,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listenToAuthState();
     listenToPosts();
     listenToUsers();
-    switchTab('posts');
+    window.switchTab('posts');
   }
 
   function listenToAuthState() {
@@ -890,7 +1027,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
           <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
             <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-              <div class="avatar">${getInitials(u.displayName)}</div>
+              <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
               <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
             <div>
@@ -935,7 +1072,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="friend-item" style="margin-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;">
             <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
               <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-                <div class="avatar">${getInitials(u.displayName)}</div>
+                <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
                 <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
               </div>
               <div>
@@ -956,7 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="friend-item">
           <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
             <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-              <div class="avatar">${getInitials(u.displayName)}</div>
+              <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
               <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
             <span>${escapeHTML(u.displayName || 'Member')}</span>
@@ -1039,7 +1176,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function listenToPosts() {
     if (elements.feedContainer) {
-      elements.feedContainer.innerHTML = '<div class="spinner"></div>';
+      elements.feedContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#888;"><i class="fa-solid fa-circle-notch fa-spin"></i> Loading posts...</div>';
     }
 
     if (currentPostsQueryRef) {
@@ -1058,6 +1195,9 @@ document.addEventListener('DOMContentLoaded', () => {
         postsList.sort((a, b) => b.createdAt - a.createdAt);
       }
       renderFeed(getCurrentSearchQuery());
+      if (modalCurrentUid) {
+        renderModalUserPosts();
+      }
     }, (error) => {
       console.warn("Realtime database error reading posts:", error);
     });
@@ -1079,6 +1219,8 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       const actionsRow = elements.postBox.querySelector('.post-actions-row');
       if (actionsRow) elements.postBox.insertBefore(previewDiv, actionsRow);
+
+      document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
     }
 
     if (elements.chatPopup) {
@@ -1091,6 +1233,8 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       const chatInputRow = elements.chatPopup.querySelector('.chat-input-row');
       if (chatInputRow) elements.chatPopup.insertBefore(chatPreviewDiv, chatInputRow);
+
+      document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
     }
   }
 
@@ -1129,12 +1273,26 @@ document.addEventListener('DOMContentLoaded', () => {
       elements.tabSignupBtn?.classList.add('active');
       elements.tabLoginBtn?.classList.remove('active');
       elements.fullNameGroup?.classList.remove('hidden');
+      elements.phoneGroup?.classList.remove('hidden');
+      elements.districtGroup?.classList.remove('hidden');
+      elements.villageGroup?.classList.remove('hidden');
+      elements.forgotPasswordWrapper?.classList.add('hidden');
       if (elements.pageAuthSubmitBtn) elements.pageAuthSubmitBtn.textContent = 'Create Account';
+      if (elements.authSwitchPrompt) {
+        elements.authSwitchPrompt.innerHTML = 'Already have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Log In</a>';
+      }
     } else {
       elements.tabLoginBtn?.classList.add('active');
       elements.tabSignupBtn?.classList.remove('active');
       elements.fullNameGroup?.classList.add('hidden');
+      elements.phoneGroup?.classList.add('hidden');
+      elements.districtGroup?.classList.add('hidden');
+      elements.villageGroup?.classList.add('hidden');
+      elements.forgotPasswordWrapper?.classList.remove('hidden');
       if (elements.pageAuthSubmitBtn) elements.pageAuthSubmitBtn.textContent = 'Log In';
+      if (elements.authSwitchPrompt) {
+        elements.authSwitchPrompt.innerHTML = 'Don\'t have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Sign Up</a>';
+      }
     }
   }
 
@@ -1145,8 +1303,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const email = elements.pageAuthEmail.value.trim();
     const password = elements.pageAuthPassword.value.trim();
     const name = elements.pageAuthName ? elements.pageAuthName.value.trim() : '';
+    const phone = elements.pageAuthPhone ? elements.pageAuthPhone.value.trim() : '';
+    const district = elements.pageAuthDistrict ? elements.pageAuthDistrict.value.trim() : '';
+    const village = elements.pageAuthVillage ? elements.pageAuthVillage.value.trim() : '';
 
-    if (!email || !password || (isSignUp && !name)) {
+    if (!email || !password || (isSignUp && (!name || !phone || !district || !village))) {
       if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please fill in all required fields.';
       return;
     }
@@ -1157,7 +1318,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const user = userCredential.user;
         await updateProfile(user, { displayName: name });
         try {
-          await update(ref(database, `users/${user.uid}`), { displayName: name, email: email, uid: user.uid, isOnline: true });
+          await update(ref(database, `users/${user.uid}`), { 
+            displayName: name, 
+            email: email, 
+            phone: phone,
+            district: district,
+            village: village,
+            uid: user.uid, 
+            isOnline: true 
+          });
         } catch (dbErr) {
           console.warn("Database user set warning:", dbErr);
         }
@@ -1169,6 +1338,9 @@ document.addEventListener('DOMContentLoaded', () => {
       elements.pageAuthEmail.value = '';
       elements.pageAuthPassword.value = '';
       if (elements.pageAuthName) elements.pageAuthName.value = '';
+      if (elements.pageAuthPhone) elements.pageAuthPhone.value = '';
+      if (elements.pageAuthDistrict) elements.pageAuthDistrict.value = '';
+      if (elements.pageAuthVillage) elements.pageAuthVillage.value = '';
     } catch (error) {
       if (elements.authErrorMsg) {
         if (error.code === 'auth/invalid-credential') {
@@ -1201,28 +1373,13 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.profileEmails.forEach(el => el.textContent = currentUser.email);
     
     elements.profileAvatars.forEach(el => {
-      if (currentUser.avatarUrl) {
-        el.style.backgroundImage = `url("${currentUser.avatarUrl}")`;
-        el.style.backgroundSize = 'cover';
-        el.style.backgroundPosition = 'center';
-        el.textContent = '';
-      } else {
-        el.style.backgroundImage = 'none';
-        el.textContent = getInitials(currentUser.name);
-      }
+      applyAvatarStyle(el, currentUser.avatarUrl, currentUser.name);
     });
 
     const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
     if (settingsAvatarPreview) {
-      if (currentUser.avatarUrl) {
-        settingsAvatarPreview.style.backgroundImage = `url("${currentUser.avatarUrl}")`;
-        settingsAvatarPreview.style.backgroundSize = 'cover';
-        settingsAvatarPreview.style.backgroundPosition = 'center';
-        settingsAvatarPreview.textContent = '';
-      } else {
-        settingsAvatarPreview.style.backgroundImage = 'none';
-        settingsAvatarPreview.textContent = getInitials(currentUser.name);
-      }
+      applyAvatarStyle(settingsAvatarPreview, currentUser.avatarUrl, currentUser.name);
+      settingsAvatarPreview.onclick = () => window.openAvatarLightbox(currentUser.avatarUrl, currentUser.name);
     }
 
     const nameInput = document.getElementById('settingsNameInput');
@@ -1289,14 +1446,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const displayTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
+      const authorUser = usersList.find(u => u.uid === post.uid);
+      const avatarUrl = post.authorAvatarUrl || (authorUser ? authorUser.avatarUrl : null);
 
       return `
         <div class="card post-card" data-id="${post.id}">
           <div class="animated-stripe-bar"></div>
           
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${post.uid}')">
-              <div class="avatar-wrapper"><div class="avatar">${escapeHTML(post.initials || 'SY')}</div></div>
+            <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${post.uid}')" title="View ${escapeHTML(post.author)}'s profile">
+              <div class="avatar-wrapper">
+                <div class="avatar" style="${avatarUrl ? `background-image: url('${avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">
+                  ${avatarUrl ? '' : escapeHTML(post.initials || 'SY')}
+                </div>
+              </div>
               <div>
                 <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Anonymous')}</strong>
                 <span style="font-size: 11px; color: #888;">${escapeHTML(displayTime)} ${post.isEdited ? '<i style="font-size:10px;">(edited)</i>' : ''}</span>
@@ -1342,13 +1505,24 @@ document.addEventListener('DOMContentLoaded', () => {
             </button>
           </div>
 
+          <!-- COMMENTS SECTION WITH CLICKABLE PROFILE AVATARS -->
           <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 8px;">
-            <div style="max-height: 120px; overflow-y: auto; margin-bottom: 8px;">
-              ${commentsArray.map(c => `
-                <div style="font-size: 12px; background: rgba(0,0,0,0.03); padding: 5px 8px; border-radius: 4px; margin-bottom: 4px;">
-                  <strong>${escapeHTML(c.author)}:</strong> ${escapeHTML(c.text)}
-                </div>
-              `).join('')}
+            <div style="max-height: 140px; overflow-y: auto; margin-bottom: 8px;">
+              ${commentsArray.map(c => {
+                const commenter = usersList.find(u => u.uid === c.uid);
+                const cAvatarUrl = c.authorAvatarUrl || (commenter ? commenter.avatarUrl : null);
+                
+                return `
+                  <div style="font-size: 12px; background: rgba(0,0,0,0.03); padding: 6px 8px; border-radius: 6px; margin-bottom: 5px; display: flex; align-items: flex-start; gap: 8px;">
+                    <div class="avatar comment-avatar" style="${cAvatarUrl ? `background-image: url('${cAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}" ${c.uid ? `onclick="openUserProfile('${c.uid}')" style="cursor:pointer;" title="View Profile"` : ''}>
+                      ${cAvatarUrl ? '' : getInitials(c.author)}
+                    </div>
+                    <div style="flex: 1;">
+                      <strong style="cursor: pointer; color: var(--text-color);" ${c.uid ? `onclick="openUserProfile('${c.uid}')"` : ''}>${escapeHTML(c.author)}:</strong> ${escapeHTML(c.text)}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
             </div>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex:1; padding: 6px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; outline: none; background: transparent; color: var(--text-color);" />
@@ -1393,6 +1567,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await push(postsRef, {
         author: currentUser.name,
         authorEmail: currentUser.email,
+        authorAvatarUrl: currentUser.avatarUrl || null,
         uid: currentUser.uid,
         initials: getInitials(currentUser.name),
         content: text,
@@ -1415,7 +1590,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-    async function handleSendChatMessage() {
+  async function handleSendChatMessage() {
     const text = elements.chatInput.value.trim();
     if ((!text && !currentChatFile) || !currentUser || !activeChatRoom) return;
 
@@ -1442,7 +1617,6 @@ document.addEventListener('DOMContentLoaded', () => {
         timestamp: Date.now()
       });
 
-      // Reset typing indicator state
       const typingRef = ref(database, `typing/${activeChatRoom}/${currentUser.uid}`);
       set(typingRef, false);
 
@@ -1508,142 +1682,202 @@ document.addEventListener('DOMContentLoaded', () => {
     if (chatPreviewDiv) chatPreviewDiv.style.display = 'none';
   }
 
-  function switchTab(tabName) {
-    elements.tabBtns.forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tabName);
-    });
-    elements.tabViews.forEach(view => {
-      if (view.id === `${tabName}View`) view.classList.remove('hidden');
-      else view.classList.add('hidden');
-    });
-  }
-
   function bindEvents() {
-    // Auth Toggles
-    elements.tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
-    elements.tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
-    elements.authPageForm?.addEventListener('submit', handleAuthSubmit);
-    elements.forgotPasswordBtn?.addEventListener('click', async () => {
-      const email = elements.pageAuthEmail.value.trim();
-      if (!email) { showToast("Enter your email address first."); return; }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        showToast("Password reset email sent!");
-      } catch (err) {
-        showToast(err.message.replace('Firebase: ', ''));
+    // Input Focus Tracking
+    document.addEventListener('focusin', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        lastFocusedInput = e.target;
       }
     });
 
-    // Navigation & Drawer
-    elements.navBtns.forEach(btn => btn.addEventListener('click', () => {
-      elements.navDrawer?.classList.add('open');
-      elements.drawerOverlay?.classList.add('active');
-    }));
+    // Close Emoji Picker Dropdown on click outside
+    document.addEventListener('click', (e) => {
+      const emojiPicker = document.getElementById('emoji-picker-dropdown');
+      const isEmojiBtn = e.target.closest('.emoji-trigger-btn');
+      if (emojiPicker && !emojiPicker.contains(e.target) && !isEmojiBtn) {
+        emojiPicker.classList.add('hidden');
+      }
+    });
+
+    // Navigation Drawer Controls
+    elements.navBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        elements.navDrawer?.classList.add('open');
+        elements.drawerOverlay?.classList.add('active');
+      });
+    });
+
     elements.drawerCloseBtn?.addEventListener('click', closeDrawer);
     elements.drawerOverlay?.addEventListener('click', closeDrawer);
 
-    document.querySelectorAll('.nav-link-item').forEach(link => {
-      link.addEventListener('click', (e) => {
+    // Profile Click Listeners (Top bar & Nav Drawer user info)
+    const topBarUserProfile = document.getElementById('topBarUserProfile');
+    const drawerProfileInfo = document.getElementById('drawerProfileInfo');
+    
+    topBarUserProfile?.addEventListener('click', () => {
+      if (currentUser) window.openUserProfile(currentUser.uid);
+    });
+
+    drawerProfileInfo?.addEventListener('click', () => {
+      closeDrawer();
+      if (currentUser) window.openUserProfile(currentUser.uid);
+    });
+
+    // Close Modals
+    document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
+      document.getElementById('profileModal')?.classList.add('hidden');
+    });
+
+    document.getElementById('closeLightboxModalBtn')?.addEventListener('click', () => {
+      document.getElementById('avatarLightboxModal')?.classList.add('hidden');
+    });
+
+    document.getElementById('avatarLightboxModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'avatarLightboxModal') {
+        document.getElementById('avatarLightboxModal')?.classList.add('hidden');
+      }
+    });
+
+    // Auth Mode Toggles
+    elements.tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
+    elements.tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
+    
+    // Auth Redirect Link Delegate
+    elements.authSwitchPrompt?.addEventListener('click', (e) => {
+      if (e.target && e.target.id === 'authRedirectBtn') {
         e.preventDefault();
-        const tab = link.dataset.tab;
-        if (tab) { switchTab(tab); closeDrawer(); }
-      });
+        setAuthMode(!isSignUpMode);
+      }
+    });
+
+    elements.authPageForm?.addEventListener('submit', handleAuthSubmit);
+
+    // Password Reset Listener
+    elements.forgotPasswordBtn?.addEventListener('click', async () => {
+      const email = elements.pageAuthEmail.value.trim();
+      if (!email) {
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please enter your email address to reset password.';
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        showToast('Password reset email sent! Check your inbox.');
+      } catch (err) {
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message.replace('Firebase: ', '');
+      }
     });
 
     elements.logoutBtns.forEach(btn => btn.addEventListener('click', handleLogout));
 
-    // Tab Bar Navigation
-    elements.tabBtns.forEach(btn => {
-      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    // Profile Picture Upload Listener inside Settings
+    const profilePicInput = document.getElementById('profilePicInput');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+
+    profilePicInput?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file || !currentUser) return;
+      
+      showToast("Uploading new profile picture...");
+      const uploadedUrl = await uploadMediaFile(file, 'profile_pictures');
+      
+      if (uploadedUrl) {
+        currentUser.avatarUrl = uploadedUrl;
+        await update(ref(database, `users/${currentUser.uid}`), { avatarUrl: uploadedUrl });
+        updateUserUI();
+        showToast("Profile picture updated!");
+      }
     });
 
-    // Post Creation & Files
+    saveSettingsBtn?.addEventListener('click', async () => {
+      const nameInput = document.getElementById('settingsNameInput');
+      if (!nameInput || !currentUser) return;
+      
+      const newName = nameInput.value.trim();
+      if (newName && newName !== currentUser.name) {
+        currentUser.name = newName;
+        await updateProfile(auth.currentUser, { displayName: newName });
+        await update(ref(database, `users/${currentUser.uid}`), { displayName: newName });
+        updateUserUI();
+        showToast("Profile settings saved!");
+      } else {
+        showToast("Settings updated.");
+      }
+    });
+
+    // Post creation events
     elements.postBtn?.addEventListener('click', handleCreatePost);
     elements.postPhotoInput?.addEventListener('change', (e) => handleFileSelect(e, false));
     elements.postFileInput?.addEventListener('change', (e) => handleFileSelect(e, false));
-    document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
 
-    // Search
+    // Search action listeners
     elements.searchActionBtn?.addEventListener('click', () => renderFeed(getCurrentSearchQuery()));
     elements.searchInput?.addEventListener('keyup', (e) => {
       if (e.key === 'Enter') renderFeed(getCurrentSearchQuery());
     });
 
-    // Chat
+    // Chat events
     elements.chatSendBtn?.addEventListener('click', handleSendChatMessage);
     elements.chatInput?.addEventListener('keyup', (e) => {
       if (e.key === 'Enter') handleSendChatMessage();
       else window.triggerTypingStatus();
     });
-    elements.chatInput?.addEventListener('focus', () => { lastFocusedInput = elements.chatInput; });
-    elements.postText?.addEventListener('focus', () => { lastFocusedInput = elements.postText; });
     elements.chatFileInput?.addEventListener('change', (e) => handleFileSelect(e, true));
-    document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
     elements.chatCloseBtn?.addEventListener('click', () => elements.chatPopup?.classList.add('hidden'));
 
-    // Modals
-    document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
-      document.getElementById('profileModal')?.classList.add('hidden');
-    });
+    // Call triggers
     elements.voiceCallTrigger?.addEventListener('click', () => window.startCall(false));
     elements.videoCallTrigger?.addEventListener('click', () => window.startCall(true));
     document.getElementById('callEndBtn')?.addEventListener('click', window.endCall);
 
-    // Load More Posts
-    elements.loadMorePostsBtn?.addEventListener('click', () => {
-      postsLimit += 25;
-      listenToPosts();
-    });
-
-    // Mark notifications read
-    document.getElementById('markAllReadBtn')?.addEventListener('click', markAllNotificationsRead);
-
-    // Profile Settings Form
-    document.getElementById('saveSettingsBtn')?.addEventListener('click', async () => {
-      const nameInput = document.getElementById('settingsNameInput');
-      const fileInput = document.getElementById('profilePicInput');
-      if (!currentUser) return;
-
-      let photoURL = currentUser.avatarUrl;
-      if (fileInput && fileInput.files[0]) {
-        photoURL = await uploadMediaFile(fileInput.files[0], 'avatars');
-      }
-
-      const newName = nameInput ? nameInput.value.trim() : currentUser.name;
-
-      try {
-        if (auth.currentUser) {
-          await updateProfile(auth.currentUser, { displayName: newName, photoURL: photoURL });
-        }
-        await update(ref(database, `users/${currentUser.uid}`), {
-          displayName: newName,
-          avatarUrl: photoURL
-        });
-        currentUser.name = newName;
-        currentUser.avatarUrl = photoURL;
-        updateUserUI();
-        showToast("Profile settings saved!");
-      } catch (err) {
-        console.error("Failed to save profile settings:", err);
-        showToast("Failed to update profile.");
-      }
-    });
-
-    // Back to top & Toast
+    // Toast Close
     elements.toastClose?.addEventListener('click', () => {
       if (elements.toastNotice) elements.toastNotice.style.display = 'none';
     });
 
+    // Tab items switching
+    elements.tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => window.switchTab(btn.dataset.tab));
+    });
+
+    document.querySelectorAll('.nav-link-item').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDrawer();
+        window.switchTab(link.dataset.tab);
+      });
+    });
+
+    // FAB and Back to top button
+    elements.fabBtn?.addEventListener('click', () => {
+      window.switchTab('posts');
+      elements.postText?.focus();
+    });
+
     window.addEventListener('scroll', () => {
-      if (elements.backToTopBtn) {
-        if (window.scrollY > 300) elements.backToTopBtn.classList.remove('hidden');
-        else elements.backToTopBtn.classList.add('hidden');
-      }
+      if (window.scrollY > 300) elements.backToTopBtn?.classList.remove('hidden');
+      else elements.backToTopBtn?.classList.add('hidden');
     });
 
     elements.backToTopBtn?.addEventListener('click', () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+
+    // Infinite modal post loader on scroll
+    const modalPostsContainer = document.getElementById('modalUserPostsContainer');
+    modalPostsContainer?.addEventListener('scroll', () => {
+      if (modalPostsContainer.scrollTop + modalPostsContainer.clientHeight >= modalPostsContainer.scrollHeight - 20) {
+        modalPostsLimit += 5;
+        renderModalUserPosts();
+      }
+    });
+
+    // Load more feed posts button
+    elements.loadMorePostsBtn?.addEventListener('click', () => {
+      postsLimit += 15;
+      listenToPosts();
+    });
+
+    document.getElementById('markAllReadBtn')?.addEventListener('click', markAllNotificationsRead);
   }
 
   init();
