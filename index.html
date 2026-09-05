@@ -75,7 +75,15 @@
       <span class="toast-close" id="toastCloseBtn"><i class="fa-solid fa-xmark"></i></span>
     </div>
 
-    <button class="fab-btn" id="fabBtn" title="Quick Post" aria-label="Quick Post"><i class="fa-solid fa-bolt"></i></button>
+    <!-- FLOATING ACTION BUTTON WITH POPUP OPTIONS -->
+    <div class="fab-container" id="fabContainer">
+      <div class="fab-options hidden" id="fabOptions">
+        <button class="fab-option-btn" id="fabChatBtn" title="Go to Chats"><i class="fa-solid fa-comments"></i> Chat</button>
+        <button class="fab-option-btn" id="fabCreatePostBtn" title="Create Post"><i class="fa-solid fa-pen-to-square"></i> Create Post</button>
+      </div>
+      <button class="fab-btn" id="fabBtn" title="Menu Options" aria-label="Menu Options"><i class="fa-solid fa-plus"></i></button>
+    </div>
+
     <button class="back-to-top-btn hidden" id="backToTopBtn" title="Back to top" aria-label="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
 
     <!-- NAVIGATION DRAWER -->
@@ -174,7 +182,7 @@
           </div>
           <div id="feedContainer"></div>
           <div style="text-align: center; margin: 15px 0;">
-            <button id="loadMorePostsBtn" class="chat-btn" style="padding: 10px 20px; font-weight: bold;"><i class="fa-solid fa-arrows-rotate"></i> Load More Posts</button>
+            <button id="loadMorePostsBtn" style="padding: 10px 20px; font-weight: bold;"><i class="fa-solid fa-arrows-rotate"></i> Load More Posts</button>
           </div>
         </div>
 

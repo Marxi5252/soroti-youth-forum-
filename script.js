@@ -931,7 +931,13 @@ document.addEventListener('DOMContentLoaded', () => {
     postBox: document.getElementById('postBox'),
     feedContainer: document.getElementById('feedContainer'),
     loadMorePostsBtn: document.getElementById('loadMorePostsBtn'),
+    
     fabBtn: document.getElementById('fabBtn'),
+    fabOptions: document.getElementById('fabOptions'),
+    fabChatBtn: document.getElementById('fabChatBtn'),
+    fabCreatePostBtn: document.getElementById('fabCreatePostBtn'),
+    fabContainer: document.getElementById('fabContainer'),
+
     backToTopBtn: document.getElementById('backToTopBtn'),
     toastNotice: document.getElementById('toastNotice'),
     toastClose: document.getElementById('toastCloseBtn'),
@@ -1136,9 +1142,34 @@ document.addEventListener('DOMContentLoaded', () => {
       listenToPosts();
     });
 
-    elements.fabBtn?.addEventListener('click', () => {
+    // FLOATING PLUS BUTTON & POPUP MENU REDIRECT EVENTS
+    elements.fabBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.fabOptions?.classList.toggle('hidden');
+      elements.fabBtn?.classList.toggle('active');
+    });
+
+    elements.fabChatBtn?.addEventListener('click', () => {
+      elements.fabOptions?.classList.add('hidden');
+      elements.fabBtn?.classList.remove('active');
+      window.switchTab('chats');
+    });
+
+    elements.fabCreatePostBtn?.addEventListener('click', () => {
+      elements.fabOptions?.classList.add('hidden');
+      elements.fabBtn?.classList.remove('active');
       window.switchTab('posts');
-      elements.postText?.focus();
+      const postBox = document.getElementById('postBox');
+      const postText = document.getElementById('postText');
+      if (postBox) postBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (postText) postText.focus();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (elements.fabContainer && !elements.fabContainer.contains(e.target)) {
+        elements.fabOptions?.classList.add('hidden');
+        elements.fabBtn?.classList.remove('active');
+      }
     });
 
     elements.backToTopBtn?.addEventListener('click', () => {
@@ -1573,75 +1604,76 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function listenToNotifications() {
     if (!currentUser) return;
-    
+
     if (notifRef && notifCallback) off(notifRef, 'value', notifCallback);
 
     notifRef = ref(database, `notifications/${currentUser.uid}`);
     notifCallback = (snapshot) => {
       const data = snapshot.val();
-      const notifList = [];
-      if (data) {
-        Object.keys(data).forEach(key => {
-          notifList.push({ id: key, ...data[key] });
+      const notifContainer = document.getElementById('notificationsContainer');
+      const badges = document.querySelectorAll('.notif-badge');
+
+      if (!notifContainer) return;
+
+      if (!data) {
+        notifContainer.innerHTML = '<p style="color:#888; font-size:13px; text-align:center; padding:15px 0;">No notifications yet.</p>';
+        badges.forEach(b => {
+          b.textContent = '0';
+          b.style.display = 'none';
         });
+        return;
       }
+
+      const notifList = Object.entries(data).map(([id, val]) => ({ id, ...val }));
       notifList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      renderNotifications(notifList);
+
+      const unreadCount = notifList.filter(n => !n.read).length;
+      badges.forEach(b => {
+        b.textContent = unreadCount;
+        b.style.display = unreadCount > 0 ? 'inline-block' : 'none';
+      });
+
+      notifContainer.innerHTML = notifList.map(item => `
+        <div style="padding: 10px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: ${item.read ? 'transparent' : 'var(--item-hover-bg)'}; border-radius: 6px; margin-bottom: 6px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="fa-solid ${item.icon || 'fa-bell'}" style="color: var(--color-red); font-size: 16px;"></i>
+            <div>
+              <div style="font-size: 13px; font-weight: ${item.read ? 'normal' : 'bold'};"><strong>${escapeHTML(item.title || '')}</strong> ${escapeHTML(item.message || '')}</div>
+              <span style="font-size: 10px; opacity: 0.6;">${item.createdAt ? timeAgo(item.createdAt) : (item.time || '')}</span>
+            </div>
+          </div>
+          ${!item.read ? `<button onclick="markNotificationRead('${item.id}')" style="background:none; border:none; color:var(--color-red); cursor:pointer; font-size:12px;" title="Mark as Read"><i class="fa-solid fa-check"></i></button>` : ''}
+        </div>
+      `).join('');
     };
+
     onValue(notifRef, notifCallback);
   }
 
-  function renderNotifications(notifList) {
-    const container = document.getElementById('notificationsContainer');
-    const badgeEls = document.querySelectorAll('.notif-badge');
-    
-    const unreadCount = notifList.filter(n => !n.read).length;
-
-    badgeEls.forEach(badge => {
-      if (unreadCount > 0) {
-        badge.textContent = unreadCount;
-        badge.style.display = 'inline-block';
-      } else {
-        badge.style.display = 'none';
-      }
-    });
-
-    if (!container) return;
-
-    if (notifList.length === 0) {
-      container.innerHTML = `<div style="text-align: center; color: #888; font-size: 13px; padding: 20px 0;">No notifications yet.</div>`;
-      return;
+  window.markNotificationRead = async function(notifId) {
+    if (!currentUser || !notifId) return;
+    try {
+      await update(ref(database, `notifications/${currentUser.uid}/${notifId}`), { read: true });
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err);
     }
-
-    container.innerHTML = notifList.map(n => `
-      <div class="notification-item ${n.read ? 'read' : 'unread'}" style="padding: 10px; margin-bottom: 8px; border-radius: 8px; border: 1px solid var(--border-color); background: ${n.read ? 'var(--card-bg)' : 'var(--item-hover-bg)'}; display: flex; align-items: center; justify-content: space-between;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <i class="fa-solid ${n.icon || 'fa-bell'}" style="color: var(--color-red); font-size: 16px;"></i>
-          <div>
-            <div style="font-size: 13px; font-weight: 600;">${escapeHTML(n.title)} <span style="font-weight: normal; opacity: 0.8;">${escapeHTML(n.message)}</span></div>
-            <div style="font-size: 11px; opacity: 0.6; margin-top: 2px;">${escapeHTML(n.time || '')} • ${n.createdAt ? timeAgo(n.createdAt) : ''}</div>
-          </div>
-        </div>
-        ${!n.read ? `<span style="width: 8px; height: 8px; background: var(--color-red); border-radius: 50%;"></span>` : ''}
-      </div>
-    `).join('');
-  }
+  };
 
   async function markAllNotificationsRead() {
     if (!currentUser) return;
     try {
-      const notifsRef = ref(database, `notifications/${currentUser.uid}`);
-      const snapshot = await get(notifsRef);
-      if (snapshot.exists()) {
+      const userNotifRef = ref(database, `notifications/${currentUser.uid}`);
+      const snap = await get(userNotifRef);
+      if (snap.exists()) {
         const updates = {};
-        Object.keys(snapshot.val()).forEach(key => {
-          updates[`${key}/read`] = true;
+        Object.keys(snap.val()).forEach(id => {
+          updates[`${id}/read`] = true;
         });
-        await update(notifsRef, updates);
-        showToast('All notifications marked as read.');
+        await update(userNotifRef, updates);
+        showToast("All notifications marked as read.");
       }
     } catch (err) {
-      console.error("Error marking notifications read:", err);
+      console.error("Failed to mark all read:", err);
     }
   }
 
@@ -1656,85 +1688,99 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = snapshot.val();
       postsList = [];
       if (data) {
-        Object.keys(data).forEach(id => {
-          postsList.push({ id, ...data[id] });
+        Object.entries(data).forEach(([id, val]) => {
+          postsList.push({ id, ...val });
         });
       }
       postsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       renderFeed(getCurrentSearchQuery());
-      if (modalCurrentUid) renderModalUserPosts();
+      if (modalCurrentUid) {
+        renderModalUserPosts();
+      }
     });
   }
 
-  function renderFeed(searchQuery = '') {
-    const container = document.getElementById('feedContainer');
-    if (!container) return;
+  function renderFeed(filterText = '') {
+    const feedContainer = document.getElementById('feedContainer');
+    if (!feedContainer) return;
 
     let filtered = postsList;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+    if (filterText) {
+      const q = filterText.toLowerCase();
       filtered = postsList.filter(p => 
+        (p.author && p.author.toLowerCase().includes(q)) ||
         (p.content && p.content.toLowerCase().includes(q)) ||
-        (p.author && p.author.toLowerCase().includes(q))
+        (p.attachmentName && p.attachmentName.toLowerCase().includes(q))
       );
     }
 
     if (filtered.length === 0) {
-      container.innerHTML = `<div class="card" style="text-align: center; color: #888; padding: 25px 15px;">No posts match your query.</div>`;
+      feedContainer.innerHTML = `<div class="card" style="text-align: center; color: #888; padding: 25px;"><i class="fa-solid fa-newspaper" style="font-size: 28px; margin-bottom: 8px; color: var(--color-red);"></i><p>No posts found${filterText ? ' matching your search' : ''}.</p></div>`;
       return;
     }
 
-    container.innerHTML = filtered.map(post => {
-      const isOwner = currentUser && (post.uid === currentUser.uid || post.authorEmail === currentUser.email);
+    feedContainer.innerHTML = filtered.map(post => {
       const isBookmarked = userBookmarks && userBookmarks[post.id];
       const likesCount = post.likes ? Object.keys(post.likes).length : 0;
       const dislikesCount = post.dislikes ? Object.keys(post.dislikes).length : 0;
       const isLiked = currentUser && post.likes && post.likes[currentUser.uid];
       const isDisliked = currentUser && post.dislikes && post.dislikes[currentUser.uid];
+      const isOwner = currentUser && (post.uid === currentUser.uid || post.authorEmail === currentUser.email);
+      const displayTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
 
-      const commentsArray = post.comments ? Object.keys(post.comments).map(k => ({ id: k, ...post.comments[k] })) : [];
-      commentsArray.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      let commentsListHTML = '';
+      let commentCount = 0;
+      if (post.comments) {
+        const cArray = Object.entries(post.comments).map(([cid, cval]) => ({ cid, ...cval }));
+        commentCount = cArray.length;
+        commentsListHTML = cArray.map(c => `
+          <div style="font-size: 12px; margin-bottom: 6px; padding: 6px 8px; background: var(--item-hover-bg); border-radius: 6px; display: flex; align-items: flex-start; gap: 8px;">
+            <div class="avatar comment-avatar" style="${c.authorAvatarUrl ? `background-image: url('${c.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${c.authorAvatarUrl ? '' : getInitials(c.author)}</div>
+            <div style="flex: 1;">
+              <strong style="cursor: pointer;" onclick="openUserProfile('${c.uid}')">${escapeHTML(c.author || 'Anonymous')}</strong>
+              <span style="display: block; font-size: 11px; opacity: 0.9;">${escapeHTML(c.text || '')}</span>
+            </div>
+          </div>
+        `).join('');
+      }
 
-      let mediaHTML = '';
+      let attachmentHTML = '';
       if (post.attachment) {
         const type = post.attachmentType || '';
         if (type === 'image') {
-          mediaHTML = `<div class="media-attachment-container"><img src="${escapeHTML(post.attachment)}" style="width: 100%; max-height: 400px; object-fit: contain; background: #000; border-radius: 6px;" /></div>`;
+          attachmentHTML = `<div class="media-attachment-container"><img src="${escapeHTML(post.attachment)}" style="width: 100%; max-height: 450px; object-fit: contain; display: block;" /></div>`;
         } else if (type === 'video') {
-          mediaHTML = `<div class="media-attachment-container"><video src="${escapeHTML(post.attachment)}" controls style="width: 100%; max-height: 400px; border-radius: 6px;"></video></div>`;
+          attachmentHTML = `<div class="media-attachment-container"><video src="${escapeHTML(post.attachment)}" controls style="width: 100%; max-height: 400px; display: block;"></video></div>`;
         } else if (type === 'audio') {
-          mediaHTML = `<div class="media-attachment-container" style="padding: 10px; background: var(--item-hover-bg);"><audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio></div>`;
+          attachmentHTML = `<div class="media-attachment-container" style="padding: 10px; background: var(--card-bg);"><audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio></div>`;
         } else {
-          mediaHTML = `
-            <div style="margin: 10px 0; padding: 10px; background: var(--item-hover-bg); border-radius: 6px; border: 1px solid var(--border-color);">
-              <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: var(--text-color); font-weight: bold; text-decoration: underline; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-                <i class="fa-solid fa-file-arrow-down" style="color: var(--color-red);"></i> ${escapeHTML(post.attachmentName || 'Download File Attachment')}
+          attachmentHTML = `
+            <div style="margin: 10px 0; background: var(--item-hover-bg); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: var(--text-color); font-weight: bold; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-file-arrow-down" style="color: var(--color-red); font-size: 18px;"></i> ${escapeHTML(post.attachmentName || 'Download File Attachment')}
               </a>
             </div>`;
         }
       }
 
-      const postTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
-      const authorInitials = getInitials(post.author);
-
       return `
-        <div class="card post-card" id="post-${post.id}" style="margin-bottom: 15px;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+        <div class="card post-card" id="post-${post.id}">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;" onclick="openUserProfile('${post.uid}')">
-              <div class="avatar" style="${post.authorAvatarUrl ? `background-image: url('${post.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${post.authorAvatarUrl ? '' : authorInitials}</div>
+              <div class="avatar profile-avatar" style="${post.authorAvatarUrl ? `background-image: url('${post.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${post.authorAvatarUrl ? '' : getInitials(post.author)}</div>
               <div>
-                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Youth Member')}</strong>
-                <span style="font-size: 11px; opacity: 0.6;">${escapeHTML(postTime)} ${post.isEdited ? '• (edited)' : ''}</span>
+                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Member')}</strong>
+                <span style="font-size: 11px; opacity: 0.6;"><i class="fa-regular fa-clock"></i> ${escapeHTML(displayTime)} ${post.isEdited ? '(edited)' : ''}</span>
               </div>
             </div>
-            
+
             <div style="display: flex; align-items: center; gap: 8px;">
               <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" onclick="toggleBookmark(this, '${post.id}')" title="Bookmark Post">
-                <i class="fa-solid fa-bookmark"></i>
+                <i class="fa-${isBookmarked ? 'solid' : 'regular'} fa-bookmark"></i>
               </button>
               ${isOwner ? `
-                <button onclick="toggleEditPost('${post.id}')" title="Edit Post" style="background: none; border: none; color: var(--text-color); opacity: 0.6; cursor: pointer; font-size: 14px;"><i class="fa-solid fa-pen"></i></button>
-                <button onclick="deletePost('${post.id}')" title="Delete Post" style="background: none; border: none; color: var(--color-red); opacity: 0.8; cursor: pointer; font-size: 14px;"><i class="fa-solid fa-trash"></i></button>
+                <button onclick="toggleEditPost('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--text-color); opacity: 0.7;" title="Edit Post"><i class="fa-solid fa-pen"></i></button>
+                <button onclick="deletePost('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--color-red);" title="Delete Post"><i class="fa-solid fa-trash"></i></button>
               ` : ''}
             </div>
           </div>
@@ -1744,128 +1790,87 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
 
           <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 10px;">
-            <textarea id="editPostInput-${post.id}" style="width: 100%; height: 70px; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--card-bg); color: var(--text-color); font-size: 13px;">${escapeHTML(post.content || '')}</textarea>
-            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 5px;">
-              <button class="chat-btn" style="background: var(--border-color); color: var(--text-color);" onclick="toggleEditPost('${post.id}')">Cancel</button>
-              <button class="chat-btn" style="background: var(--color-red); color: white;" onclick="saveEditPost('${post.id}')">Save</button>
+            <textarea id="editPostInput-${post.id}" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 13px;" rows="3">${escapeHTML(post.content || '')}</textarea>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;">
+              <button onclick="toggleEditPost('${post.id}')" style="padding: 4px 10px; font-size: 12px; background: transparent; border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px; cursor: pointer;">Cancel</button>
+              <button onclick="saveEditPost('${post.id}')" class="post-btn" style="padding: 4px 12px; font-size: 12px;">Save</button>
             </div>
           </div>
 
-          ${mediaHTML}
+          ${attachmentHTML}
 
-          <!-- Reactions and Interactions Bar -->
-          <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); padding: 8px 0; margin-top: 10px;">
-            <div style="display: flex; gap: 15px;">
-              <button onclick="toggleLike('${post.id}')" style="background: none; border: none; color: ${isLiked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isLiked ? 'bold' : 'normal'}; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
-                <i class="${isLiked ? 'fa-solid' : 'fa-regular'} fa-thumbs-up"></i> ${likesCount}
-              </button>
-              <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; color: ${isDisliked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isDisliked ? 'bold' : 'normal'}; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
-                <i class="${isDisliked ? 'fa-solid' : 'fa-regular'} fa-thumbs-down"></i> ${dislikesCount}
-              </button>
-              <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; color: var(--text-color); cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
-                <i class="fa-regular fa-comment"></i> ${commentsArray.length}
-              </button>
-            </div>
+          <div style="display: flex; gap: 15px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-top: 10px; font-size: 13px;">
+            <button onclick="toggleLike('${post.id}')" style="background: none; border: none; cursor: pointer; color: ${isLiked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isLiked ? 'bold' : 'normal'}; display: flex; align-items: center; gap: 5px;">
+              <i class="fa-${isLiked ? 'solid' : 'regular'} fa-heart"></i> ${likesCount}
+            </button>
+            <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; cursor: pointer; color: ${isDisliked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isDisliked ? 'bold' : 'normal'}; display: flex; align-items: center; gap: 5px;">
+              <i class="fa-${isDisliked ? 'solid' : 'regular'} fa-thumbs-down"></i> ${dislikesCount}
+            </button>
+            <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--text-color); display: flex; align-items: center; gap: 5px;">
+              <i class="fa-regular fa-comment"></i> ${commentCount}
+            </button>
           </div>
 
-          <!-- Comment Section -->
-          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; padding-top: 5px;">
-            <div id="commentsList-${post.id}" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px;">
-              ${commentsArray.length === 0 ? '<div style="font-size: 11px; color: #888; text-align: center; padding: 5px 0;">No comments yet.</div>' : commentsArray.map(c => `
-                <div style="display: flex; gap: 8px; margin-bottom: 8px; background: var(--item-hover-bg); padding: 6px 10px; border-radius: 8px;">
-                  <div class="comment-avatar avatar" style="${c.authorAvatarUrl ? `background-image: url('${c.authorAvatarUrl}'); background-size: cover; color: transparent;` : ''}">${c.authorAvatarUrl ? '' : getInitials(c.author)}</div>
-                  <div style="flex: 1;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <strong style="font-size: 12px;">${escapeHTML(c.author || 'User')}</strong>
-                      <span style="font-size: 10px; opacity: 0.6;">${c.createdAt ? timeAgo(c.createdAt) : ''}</span>
-                    </div>
-                    <p style="font-size: 12px; margin-top: 2px; line-height: 1.3;">${escapeHTML(c.text)}</p>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
+          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 12px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+            <div style="margin-bottom: 10px;">${commentsListHTML}</div>
             <div style="display: flex; gap: 6px;">
-              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex: 1; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; background: var(--card-bg); color: var(--text-color);" onkeypress="if(event.key === 'Enter') addComment('${post.id}')" />
-              <button class="chat-btn" style="padding: 6px 12px; font-size: 12px;" onclick="addComment('${post.id}')">Send</button>
+              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 12px;" onkeypress="if(event.key==='Enter') addComment('${post.id}')" />
+              <button onclick="addComment('${post.id}')" class="post-btn" style="padding: 6px 12px; font-size: 12px;">Reply</button>
             </div>
           </div>
-
         </div>
       `;
     }).join('');
   }
 
   function setupPreviewContainers() {
-    if (elements.postBox) {
-      let previewContainer = document.getElementById('postPreviewContainer');
-      if (!previewContainer) {
-        previewContainer = document.createElement('div');
-        previewContainer.id = 'postPreviewContainer';
-        previewContainer.style.display = 'none';
-        previewContainer.style.position = 'relative';
-        previewContainer.style.margin = '10px 0';
-        previewContainer.style.padding = '8px';
-        previewContainer.style.background = 'var(--item-hover-bg)';
-        previewContainer.style.borderRadius = '8px';
-        previewContainer.style.border = '1px dashed var(--border-color)';
+    const postBox = document.getElementById('postBox');
+    if (postBox && !document.getElementById('postPreviewContainer')) {
+      const container = document.createElement('div');
+      container.id = 'postPreviewContainer';
+      container.style.cssText = 'display: none; margin-top: 10px; position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color); background: #000; padding: 5px;';
+      
+      container.innerHTML = `
+        <button type="button" id="clearPostPreviewBtn" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; z-index: 10;"><i class="fa-solid fa-xmark"></i></button>
+        <img id="postPreviewImg" style="display: none; max-width: 100%; max-height: 200px; margin: 0 auto; object-fit: contain;" />
+        <video id="postPreviewVid" controls style="display: none; width: 100%; max-height: 200px;"></video>
+        <audio id="postPreviewAud" controls style="display: none; width: 100%; margin-top: 25px;"></audio>
+        <div id="postPreviewFile" style="display: none; color: white; padding: 10px; font-size: 12px; word-break: break-all;"></div>
+      `;
+      postBox.appendChild(container);
 
-        previewContainer.innerHTML = `
-          <button type="button" id="clearPostPreviewBtn" style="position: absolute; top: 5px; right: 5px; background: var(--color-red); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10;"><i class="fa-solid fa-xmark"></i></button>
-          <img id="postPreviewImg" style="display: none; max-width: 100%; max-height: 200px; border-radius: 6px; object-fit: contain; margin: 0 auto;" />
-          <video id="postPreviewVid" controls style="display: none; max-width: 100%; max-height: 200px; border-radius: 6px; margin: 0 auto;"></video>
-          <audio id="postPreviewAud" controls style="display: none; width: 100%; margin-top: 5px;"></audio>
-          <div id="postPreviewFile" style="display: none; font-size: 12px; font-weight: bold; color: var(--text-color); padding: 5px 0;"></div>
-        `;
-
-        const textarea = elements.postBox.querySelector('textarea');
-        if (textarea && textarea.nextSibling) {
-          elements.postBox.insertBefore(previewContainer, textarea.nextSibling);
-        } else {
-          elements.postBox.appendChild(previewContainer);
-        }
-
-        document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
-      }
+      document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
     }
 
-    if (elements.chatPopup) {
-      const inputRow = elements.chatPopup.querySelector('.chat-input-row');
-      let chatPreviewContainer = document.getElementById('chatPreviewContainer');
-      if (!chatPreviewContainer && inputRow) {
-        chatPreviewContainer = document.createElement('div');
-        chatPreviewContainer.id = 'chatPreviewContainer';
-        chatPreviewContainer.style.display = 'none';
-        chatPreviewContainer.style.alignItems = 'center';
-        chatPreviewContainer.style.justifyContent = 'space-between';
-        chatPreviewContainer.style.padding = '5px 10px';
-        chatPreviewContainer.style.background = 'var(--item-hover-bg)';
-        chatPreviewContainer.style.borderTop = '1px solid var(--border-color)';
-        chatPreviewContainer.style.fontSize = '12px';
+    const chatInputRow = document.querySelector('.chat-input-row');
+    if (chatInputRow && !document.getElementById('chatPreviewContainer')) {
+      const container = document.createElement('div');
+      container.id = 'chatPreviewContainer';
+      container.style.cssText = 'display: none; padding: 6px 12px; background: var(--item-hover-bg); border-top: 1px solid var(--border-color); align-items: center; justify-content: space-between; font-size: 11px;';
+      
+      container.innerHTML = `
+        <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+        <button type="button" id="clearChatPreviewBtn" style="background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 14px;"><i class="fa-solid fa-xmark"></i></button>
+      `;
+      chatInputRow.parentNode.insertBefore(container, chatInputRow);
 
-        chatPreviewContainer.innerHTML = `
-          <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; font-weight: 500;"></span>
-          <button type="button" id="clearChatPreviewBtn" style="background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 14px;"><i class="fa-solid fa-xmark"></i></button>
-        `;
-
-        elements.chatPopup.insertBefore(chatPreviewContainer, inputRow);
-        document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
-      }
+      document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
     }
   }
 
   function clearPostPreview() {
     currentPostFile = null;
-    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
-    if (elements.postFileInput) elements.postFileInput.value = '';
     const previewContainer = document.getElementById('postPreviewContainer');
     if (previewContainer) previewContainer.style.display = 'none';
+    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
+    if (elements.postFileInput) elements.postFileInput.value = '';
   }
 
   function clearChatPreview() {
     currentChatFile = null;
-    if (elements.chatFileInput) elements.chatFileInput.value = '';
     const chatPreviewContainer = document.getElementById('chatPreviewContainer');
     if (chatPreviewContainer) chatPreviewContainer.style.display = 'none';
+    if (elements.chatFileInput) elements.chatFileInput.value = '';
   }
 
   init();
