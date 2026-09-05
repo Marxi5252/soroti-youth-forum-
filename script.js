@@ -223,6 +223,11 @@ function showToast(message) {
   setTimeout(() => { toastNotice.style.display = 'none'; }, 4000);
 }
 
+function getCurrentSearchQuery() {
+  const searchInput = document.getElementById('searchInput');
+  return searchInput ? searchInput.value.trim() : '';
+}
+
 function setupPresenceSystem(user) {
   if (!user) return;
   
@@ -275,7 +280,35 @@ function closeDrawer() {
 
 // 5. GLOBAL INTERACTIVE WINDOW FUNCTIONS
 
-// LIGHTBOX PHOTO VIEWER
+window.navigateToPost = function(postId) {
+  const profileModal = document.getElementById('profileModal');
+  if (profileModal) profileModal.classList.add('hidden');
+
+  window.switchTab('posts');
+
+  setTimeout(() => {
+    let postEl = document.getElementById(`post-${postId}`);
+    if (!postEl) {
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput && searchInput.value) {
+        searchInput.value = '';
+      }
+      renderFeed('');
+      postEl = document.getElementById(`post-${postId}`);
+    }
+
+    if (postEl) {
+      postEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      postEl.classList.remove('highlight-post');
+      void postEl.offsetWidth;
+      postEl.classList.add('highlight-post');
+      showToast('Navigated to post.');
+    } else {
+      showToast('Post could not be located in feed.');
+    }
+  }, 150);
+};
+
 window.openAvatarLightbox = function(avatarUrl, userName) {
   const lightboxModal = document.getElementById('avatarLightboxModal');
   const lightboxImg = document.getElementById('lightboxImg');
@@ -406,8 +439,11 @@ function renderModalUserPosts() {
     }
 
     return `
-      <div class="modal-post-item" style="background: var(--item-hover-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin-bottom: 8px; text-align: left;">
-        <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;"><i class="fa-regular fa-clock"></i> ${escapeHTML(displayTime)}</div>
+      <div class="modal-post-item" onclick="navigateToPost('${post.id}')" style="background: var(--item-hover-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin-bottom: 8px; text-align: left; cursor: pointer; transition: transform 0.2s, border-color 0.2s;" onmouseover="this.style.borderColor='var(--color-red)'" onmouseout="this.style.borderColor='var(--border-color)'" title="Click to view post in main feed">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.7; margin-bottom: 4px;">
+          <span><i class="fa-regular fa-clock"></i> ${escapeHTML(displayTime)}</span>
+          <span style="color: var(--color-red); font-weight: bold;"><i class="fa-solid fa-arrow-up-right-from-square"></i> View Post</span>
+        </div>
         ${post.content ? `<p style="font-size: 13px; line-height: 1.4; margin: 0;">${escapeHTML(post.content)}</p>` : ''}
         ${attachmentHTML}
       </div>
@@ -415,11 +451,10 @@ function renderModalUserPosts() {
   }).join('');
 
   if (modalPostsLimit < userPosts.length) {
-    container.innerHTML += `<div style="text-align: center; font-size: 11px; color: #888; padding: 8px 0;"><i class="fa-solid fa-spinner fa-spin"></i> Scroll down to load more...</div>`;
+    container.innerHTML += `<div style="text-align: center; font-size: 11px; color: #888; padding: 8px 0; cursor: pointer;" onclick="modalPostsLimit+=5; renderModalUserPosts();"><i class="fa-solid fa-arrows-rotate"></i> Load more user posts...</div>`;
   }
 }
 
-// OPEN USER PROFILE MODAL
 window.openUserProfile = function(uid) {
   let user = usersList.find(u => u.uid === uid);
   
@@ -444,7 +479,6 @@ window.openUserProfile = function(uid) {
   
   applyAvatarStyle(avatarEl, user.avatarUrl, displayName);
 
-  // Attach Lightbox Zoom Click on Modal Avatar Image
   if (avatarEl) {
     avatarEl.onclick = () => window.openAvatarLightbox(user.avatarUrl, displayName);
   }
@@ -926,6 +960,436 @@ document.addEventListener('DOMContentLoaded', () => {
     window.switchTab('posts');
   }
 
+  function updateAuthView(isLoggedIn) {
+    if (isLoggedIn) {
+      if (elements.authScreen) elements.authScreen.classList.add('hidden');
+      if (elements.appContent) elements.appContent.classList.remove('hidden');
+      
+      const displayName = currentUser.name || 'Member';
+      elements.profileNames.forEach(el => el.textContent = displayName);
+      elements.profileEmails.forEach(el => el.textContent = currentUser.email || '');
+      elements.profileAvatars.forEach(el => applyAvatarStyle(el, currentUser.avatarUrl, displayName));
+      
+      const topBarUserProfile = document.getElementById('topBarUserProfile');
+      if (topBarUserProfile) topBarUserProfile.classList.remove('hidden');
+      if (elements.signupBtn) elements.signupBtn.classList.add('hidden');
+
+      const settingsNameInput = document.getElementById('settingsNameInput');
+      const settingsEmailInput = document.getElementById('settingsEmailInput');
+      const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
+
+      if (settingsNameInput) settingsNameInput.value = displayName;
+      if (settingsEmailInput) settingsEmailInput.value = currentUser.email || '';
+      if (settingsAvatarPreview) applyAvatarStyle(settingsAvatarPreview, currentUser.avatarUrl, displayName);
+    } else {
+      if (elements.authScreen) elements.authScreen.classList.remove('hidden');
+      if (elements.appContent) elements.appContent.classList.add('hidden');
+      const topBarUserProfile = document.getElementById('topBarUserProfile');
+      if (topBarUserProfile) topBarUserProfile.classList.add('hidden');
+      if (elements.signupBtn) elements.signupBtn.classList.remove('hidden');
+    }
+  }
+
+  function setAuthMode(signUp) {
+    isSignUpMode = signUp;
+    elements.tabLoginBtn.classList.toggle('active', !isSignUpMode);
+    elements.tabSignupBtn.classList.toggle('active', isSignUpMode);
+    
+    elements.fullNameGroup.classList.toggle('hidden', !isSignUpMode);
+    elements.phoneGroup.classList.toggle('hidden', !isSignUpMode);
+    elements.districtGroup.classList.toggle('hidden', !isSignUpMode);
+    elements.villageGroup.classList.toggle('hidden', !isSignUpMode);
+    
+    if (elements.forgotPasswordWrapper) {
+      elements.forgotPasswordWrapper.style.display = isSignUpMode ? 'none' : 'block';
+    }
+
+    elements.pageAuthSubmitBtn.textContent = isSignUpMode ? 'Sign Up' : 'Log In';
+    elements.authSwitchPrompt.innerHTML = isSignUpMode
+      ? `Already have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Log In</a>`
+      : `Don't have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Sign Up</a>`;
+
+    document.getElementById('authRedirectBtn')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      setAuthMode(!isSignUpMode);
+    });
+
+    if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
+  }
+
+  function bindEvents() {
+    elements.tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
+    elements.tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
+
+    document.getElementById('authRedirectBtn')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      setAuthMode(!isSignUpMode);
+    });
+
+    elements.forgotPasswordBtn?.addEventListener('click', async () => {
+      const email = elements.pageAuthEmail.value.trim();
+      if (!email) {
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please enter your email address to reset password.';
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        showToast('Password reset link sent to your email.');
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
+      } catch (err) {
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message;
+      }
+    });
+
+    elements.authPageForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
+
+      const email = elements.pageAuthEmail.value.trim();
+      const password = elements.pageAuthPassword.value;
+
+      try {
+        if (isSignUpMode) {
+          const name = elements.pageAuthName.value.trim();
+          const phone = elements.pageAuthPhone.value.trim();
+          const district = elements.pageAuthDistrict.value.trim();
+          const village = elements.pageAuthVillage.value.trim();
+
+          if (!name) throw new Error('Full Name is required.');
+
+          const userCred = await createUserWithEmailAndPassword(auth, email, password);
+          await updateProfile(userCred.user, { displayName: name });
+
+          await set(ref(database, `users/${userCred.user.uid}`), {
+            displayName: name,
+            email: email,
+            phone: phone,
+            district: district,
+            village: village,
+            createdAt: Date.now(),
+            isOnline: true
+          });
+
+          showToast('Account created successfully!');
+        } else {
+          await signInWithEmailAndPassword(auth, email, password);
+          showToast('Welcome back!');
+        }
+      } catch (err) {
+        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message;
+      }
+    });
+
+    elements.navBtns.forEach(btn => btn.addEventListener('click', () => {
+      elements.navDrawer?.classList.add('open');
+      elements.drawerOverlay?.classList.add('active');
+    }));
+
+    elements.drawerCloseBtn?.addEventListener('click', closeDrawer);
+    elements.drawerOverlay?.addEventListener('click', closeDrawer);
+
+    elements.logoutBtns.forEach(btn => btn.addEventListener('click', () => {
+      if (currentUser) {
+        set(ref(database, `users/${currentUser.uid}/isOnline`), false);
+      }
+      signOut(auth).then(() => showToast('Logged out.'));
+      closeDrawer();
+    }));
+
+    elements.signupBtn?.addEventListener('click', () => {
+      setAuthMode(false);
+      updateAuthView(false);
+    });
+
+    elements.searchInput?.addEventListener('input', (e) => {
+      renderFeed(e.target.value.trim());
+    });
+
+    elements.searchActionBtn?.addEventListener('click', () => {
+      renderFeed(getCurrentSearchQuery());
+    });
+
+    elements.tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.switchTab(btn.dataset.tab);
+      });
+    });
+
+    document.querySelectorAll('.nav-link-item').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tab = link.dataset.tab;
+        if (tab) {
+          window.switchTab(tab);
+          closeDrawer();
+        }
+      });
+    });
+
+    elements.postPhotoInput?.addEventListener('change', (e) => handlePostFileSelect(e.target.files[0]));
+    elements.postFileInput?.addEventListener('change', (e) => handlePostFileSelect(e.target.files[0]));
+
+    elements.postBtn?.addEventListener('click', handleCreatePost);
+
+    elements.loadMorePostsBtn?.addEventListener('click', () => {
+      postsLimit += 25;
+      listenToPosts();
+    });
+
+    elements.fabBtn?.addEventListener('click', () => {
+      window.switchTab('posts');
+      elements.postText?.focus();
+    });
+
+    elements.backToTopBtn?.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    window.addEventListener('scroll', () => {
+      if (window.scrollY > 300) elements.backToTopBtn?.classList.remove('hidden');
+      else elements.backToTopBtn?.classList.add('hidden');
+    });
+
+    elements.chatSendBtn?.addEventListener('click', handleSendChatMessage);
+    elements.chatInput?.addEventListener('keypress', (e) => {
+      window.triggerTypingStatus();
+      if (e.key === 'Enter') handleSendChatMessage();
+    });
+
+    elements.chatInput?.addEventListener('focus', (e) => lastFocusedInput = e.target);
+    elements.postText?.addEventListener('focus', (e) => lastFocusedInput = e.target);
+
+    elements.chatFileInput?.addEventListener('change', (e) => handleChatFileSelect(e.target.files[0]));
+
+    elements.chatCloseBtn?.addEventListener('click', () => {
+      elements.chatPopup?.classList.add('hidden');
+    });
+
+    elements.voiceCallTrigger?.addEventListener('click', () => window.startCall(false));
+    elements.videoCallTrigger?.addEventListener('click', () => window.startCall(true));
+
+    document.getElementById('callEndBtn')?.addEventListener('click', window.endCall);
+
+    document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
+      document.getElementById('profileModal')?.classList.add('hidden');
+    });
+
+    document.getElementById('closeLightboxModalBtn')?.addEventListener('click', () => {
+      document.getElementById('avatarLightboxModal')?.classList.add('hidden');
+    });
+
+    document.getElementById('drawerProfileInfo')?.addEventListener('click', () => {
+      if (currentUser) {
+        window.openUserProfile(currentUser.uid);
+        closeDrawer();
+      }
+    });
+
+    document.getElementById('topBarUserProfile')?.addEventListener('click', () => {
+      if (currentUser) window.openUserProfile(currentUser.uid);
+    });
+
+    document.getElementById('markAllReadBtn')?.addEventListener('click', markAllNotificationsRead);
+
+    document.getElementById('profilePicInput')?.addEventListener('change', handleProfilePicUpload);
+
+    document.getElementById('saveSettingsBtn')?.addEventListener('click', async () => {
+      const nameInput = document.getElementById('settingsNameInput');
+      if (!nameInput || !currentUser) return;
+      const newName = nameInput.value.trim();
+      if (!newName) {
+        showToast('Name cannot be empty.');
+        return;
+      }
+      try {
+        await updateProfile(auth.currentUser, { displayName: newName });
+        await update(ref(database, `users/${currentUser.uid}`), { displayName: newName });
+        currentUser.name = newName;
+        updateAuthView(true);
+        showToast('Settings saved successfully.');
+      } catch (err) {
+        console.error("Save settings failed:", err);
+        showToast('Failed to save settings.');
+      }
+    });
+
+    document.getElementById('enablePushBtn')?.addEventListener('click', () => {
+      if ("Notification" in window) {
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") showToast('Browser desktop alerts enabled!');
+          else showToast('Alerts permission denied.');
+        });
+      } else {
+        showToast('Desktop alerts not supported in this browser.');
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('emoji-picker-dropdown');
+      if (dropdown && !dropdown.contains(e.target) && !e.target.closest('.emoji-trigger-btn')) {
+        dropdown.classList.add('hidden');
+      }
+    });
+  }
+
+  function handlePostFileSelect(file) {
+    if (!file) return;
+    currentPostFile = file;
+
+    const previewContainer = document.getElementById('postPreviewContainer');
+    const previewImg = document.getElementById('postPreviewImg');
+    const previewVid = document.getElementById('postPreviewVid');
+    const previewAud = document.getElementById('postPreviewAud');
+    const previewFile = document.getElementById('postPreviewFile');
+
+    if (!previewContainer) return;
+
+    previewImg.style.display = 'none';
+    previewVid.style.display = 'none';
+    previewAud.style.display = 'none';
+    previewFile.style.display = 'none';
+
+    const url = URL.createObjectURL(file);
+
+    if (file.type.startsWith('image/')) {
+      previewImg.src = url;
+      previewImg.style.display = 'block';
+    } else if (file.type.startsWith('video/')) {
+      previewVid.src = url;
+      previewVid.style.display = 'block';
+    } else if (file.type.startsWith('audio/')) {
+      previewAud.src = url;
+      previewAud.style.display = 'block';
+    } else {
+      previewFile.textContent = `Attached: ${file.name}`;
+      previewFile.style.display = 'block';
+    }
+
+    previewContainer.style.display = 'block';
+  }
+
+  function handleChatFileSelect(file) {
+    if (!file) return;
+    currentChatFile = file;
+    const chatPreviewContainer = document.getElementById('chatPreviewContainer');
+    const chatPreviewText = document.getElementById('chatPreviewText');
+    if (chatPreviewContainer && chatPreviewText) {
+      chatPreviewText.textContent = `Attachment: ${file.name}`;
+      chatPreviewContainer.style.display = 'flex';
+    }
+  }
+
+  async function handleCreatePost() {
+    if (!currentUser) {
+      showToast("Please log in to publish posts.");
+      return;
+    }
+
+    const content = elements.postText ? elements.postText.value.trim() : '';
+    if (!content && !currentPostFile) {
+      showToast("Please enter message content or attach a file.");
+      return;
+    }
+
+    if (elements.postBtn) elements.postBtn.disabled = true;
+
+    try {
+      let mediaUrl = null;
+      let mediaType = null;
+
+      if (currentPostFile) {
+        mediaUrl = await uploadMediaFile(currentPostFile, 'post_attachments');
+        if (currentPostFile.type.startsWith('image/')) mediaType = 'image';
+        else if (currentPostFile.type.startsWith('video/')) mediaType = 'video';
+        else if (currentPostFile.type.startsWith('audio/')) mediaType = 'audio';
+        else mediaType = 'file';
+      }
+
+      const newPostRef = push(ref(database, 'posts'));
+      await set(newPostRef, {
+        author: currentUser.name,
+        authorEmail: currentUser.email,
+        authorAvatarUrl: currentUser.avatarUrl || null,
+        uid: currentUser.uid,
+        content: content,
+        attachment: mediaUrl,
+        attachmentType: mediaType,
+        attachmentName: currentPostFile ? currentPostFile.name : null,
+        createdAt: Date.now()
+      });
+
+      if (elements.postText) elements.postText.value = '';
+      clearPostPreview();
+      showToast("Post published successfully!");
+    } catch (err) {
+      console.error("Create post error:", err);
+      showToast("Failed to create post.");
+    } finally {
+      if (elements.postBtn) elements.postBtn.disabled = false;
+    }
+  }
+
+  async function handleSendChatMessage() {
+    if (!currentUser || !activeChatRoom) return;
+    const text = elements.chatInput ? elements.chatInput.value.trim() : '';
+
+    if (!text && !currentChatFile) return;
+
+    try {
+      let attachmentUrl = null;
+      let attachmentType = null;
+
+      if (currentChatFile) {
+        attachmentUrl = await uploadMediaFile(currentChatFile, 'chat_attachments');
+        if (currentChatFile.type.startsWith('image/')) attachmentType = 'image';
+        else attachmentType = 'file';
+      }
+
+      const msgRef = push(ref(database, `chats/${activeChatRoom}`));
+      await set(msgRef, {
+        senderUid: currentUser.uid,
+        senderName: currentUser.name,
+        text: text,
+        attachment: attachmentUrl,
+        attachmentType: attachmentType,
+        attachmentName: currentChatFile ? currentChatFile.name : null,
+        createdAt: Date.now(),
+        read: false
+      });
+
+      if (elements.chatInput) elements.chatInput.value = '';
+      clearChatPreview();
+
+      if (activeChatRecipientUid) {
+        sendNotification(activeChatRecipientUid, currentUser.name, 'sent you a message.', 'fa-comment');
+      }
+
+      set(ref(database, `typing/${activeChatRoom}/${currentUser.uid}`), false);
+    } catch (err) {
+      console.error("Failed to send chat message:", err);
+    }
+  }
+
+  async function handleProfilePicUpload(e) {
+    const file = e.target.files[0];
+    if (!file || !currentUser) return;
+
+    try {
+      showToast('Uploading profile picture...');
+      const downloadUrl = await uploadMediaFile(file, `profile_pictures/${currentUser.uid}`);
+      if (downloadUrl) {
+        await updateProfile(auth.currentUser, { photoURL: downloadUrl });
+        await update(ref(database, `users/${currentUser.uid}`), { avatarUrl: downloadUrl });
+        currentUser.avatarUrl = downloadUrl;
+        updateAuthView(true);
+        showToast('Profile picture updated successfully!');
+      }
+    } catch (err) {
+      console.error("Profile picture upload error:", err);
+      showToast('Failed to upload picture.');
+    }
+  }
+
   function listenToAuthState() {
     onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -936,7 +1400,7 @@ document.addEventListener('DOMContentLoaded', () => {
             userData = userSnapshot.val();
           }
         } catch (err) {
-          console.warn("Could not load user profile data from Realtime Database:", err);
+          console.warn("Could not load user profile data:", err);
         }
 
         currentUser = {
@@ -1020,10 +1484,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarContainer = document.getElementById('sidebarMembersContainer');
 
     const otherMembers = usersList.filter(u => !currentUser || u.uid !== currentUser.uid);
-    const addedFriends = otherMembers.filter(u => friendsList.includes(u.uid));
+    const loggedAndAddedFriends = otherMembers.filter(u => u.isOnline || friendsList.includes(u.uid));
 
     if (chatsContainer) {
-      chatsContainer.innerHTML = otherMembers.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No members registered yet.</p>' : otherMembers.map(u => `
+      chatsContainer.innerHTML = loggedAndAddedFriends.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No logged-in or added friends available.</p>' : loggedAndAddedFriends.map(u => {
+        const isFriend = friendsList.includes(u.uid);
+        return `
         <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
           <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
             <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
@@ -1031,13 +1497,14 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
             <div>
-              <strong style="font-size: 14px; display: block;">${escapeHTML(u.displayName || 'Member')}</strong>
+              <strong style="font-size: 14px; display: block;">${escapeHTML(u.displayName || 'Member')} ${isFriend ? '<span style="font-size: 10px; color: var(--color-red); font-weight: normal;">(Friend)</span>' : ''}</strong>
               <span style="font-size: 11px; opacity: 0.7;">${u.isOnline ? 'Online now' : 'Offline'}</span>
             </div>
           </div>
           <button class="chat-btn" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i> Chat</button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     if (findFriendsContainer) {
@@ -1089,16 +1556,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (sidebarContainer) {
-      sidebarContainer.innerHTML = addedFriends.length === 0 ? '<p style="color:#888; font-size:12px;">No added friends online yet.</p>' : addedFriends.slice(0, 5).map(u => `
-        <div class="friend-item">
+      sidebarContainer.innerHTML = loggedAndAddedFriends.length === 0 ? '<p style="color:#888; font-size:12px;">No logged or added friends active right now.</p>' : loggedAndAddedFriends.slice(0, 8).map(u => `
+        <div class="friend-item" style="margin-bottom: 8px;">
           <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
             <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
               <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
               <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
             </div>
-            <span>${escapeHTML(u.displayName || 'Member')}</span>
+            <span style="font-size: 13px; font-weight: 500;">${escapeHTML(u.displayName || 'Member')}</span>
           </div>
-          <button class="chat-btn" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i></button>
+          <button class="chat-btn" style="padding: 4px 8px; font-size: 11px;" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i></button>
         </div>
       `).join('');
     }
@@ -1117,41 +1584,45 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.keys(data).forEach(key => {
           notifList.push({ id: key, ...data[key] });
         });
-        notifList.sort((a, b) => b.createdAt - a.createdAt);
       }
+      notifList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       renderNotifications(notifList);
     };
-
     onValue(notifRef, notifCallback);
   }
 
-  function renderNotifications(notifications) {
+  function renderNotifications(notifList) {
     const container = document.getElementById('notificationsContainer');
     const badgeEls = document.querySelectorAll('.notif-badge');
     
-    const unreadCount = notifications.filter(n => !n.read).length;
-    badgeEls.forEach(b => {
-      b.textContent = unreadCount;
-      b.style.display = unreadCount > 0 ? 'inline-block' : 'none';
+    const unreadCount = notifList.filter(n => !n.read).length;
+
+    badgeEls.forEach(badge => {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
     });
 
     if (!container) return;
 
-    if (notifications.length === 0) {
-      container.innerHTML = `
-        <div style="padding: 20px; text-align: center; color: #888; font-size: 13px;">
-          No notifications yet. You're all caught up!
-        </div>`;
+    if (notifList.length === 0) {
+      container.innerHTML = `<div style="text-align: center; color: #888; font-size: 13px; padding: 20px 0;">No notifications yet.</div>`;
       return;
     }
 
-    container.innerHTML = notifications.map(notif => `
-      <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05); ${notif.read ? 'opacity: 0.6;' : 'font-weight: 600;'}">
-        <span>
-          <i class="fa-solid ${escapeHTML(notif.icon || 'fa-bell')}" style="color: var(--color-red); margin-right: 6px;"></i> 
-          <strong>${escapeHTML(notif.title)}</strong> ${escapeHTML(notif.message)}
-        </span>
-        <span style="font-size: 11px; opacity: 0.5;">${timeAgo(notif.createdAt)}</span>
+    container.innerHTML = notifList.map(n => `
+      <div class="notification-item ${n.read ? 'read' : 'unread'}" style="padding: 10px; margin-bottom: 8px; border-radius: 8px; border: 1px solid var(--border-color); background: ${n.read ? 'var(--card-bg)' : 'var(--item-hover-bg)'}; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <i class="fa-solid ${n.icon || 'fa-bell'}" style="color: var(--color-red); font-size: 16px;"></i>
+          <div>
+            <div style="font-size: 13px; font-weight: 600;">${escapeHTML(n.title)} <span style="font-weight: normal; opacity: 0.8;">${escapeHTML(n.message)}</span></div>
+            <div style="font-size: 11px; opacity: 0.6; margin-top: 2px;">${escapeHTML(n.time || '')} • ${n.createdAt ? timeAgo(n.createdAt) : ''}</div>
+          </div>
+        </div>
+        ${!n.read ? `<span style="width: 8px; height: 8px; background: var(--color-red); border-radius: 50%;"></span>` : ''}
       </div>
     `).join('');
   }
@@ -1159,374 +1630,163 @@ document.addEventListener('DOMContentLoaded', () => {
   async function markAllNotificationsRead() {
     if (!currentUser) return;
     try {
-      const targetNotifRef = ref(database, `notifications/${currentUser.uid}`);
-      const snapshot = await get(targetNotifRef);
+      const notifsRef = ref(database, `notifications/${currentUser.uid}`);
+      const snapshot = await get(notifsRef);
       if (snapshot.exists()) {
         const updates = {};
         Object.keys(snapshot.val()).forEach(key => {
           updates[`${key}/read`] = true;
         });
-        await update(targetNotifRef, updates);
+        await update(notifsRef, updates);
         showToast('All notifications marked as read.');
       }
     } catch (err) {
-      console.error("Failed to mark notifications read:", err);
+      console.error("Error marking notifications read:", err);
     }
   }
 
   function listenToPosts() {
-    if (elements.feedContainer) {
-      elements.feedContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#888;"><i class="fa-solid fa-circle-notch fa-spin"></i> Loading posts...</div>';
-    }
-
     if (currentPostsQueryRef) {
       off(currentPostsQueryRef);
     }
 
     currentPostsQueryRef = query(ref(database, 'posts'), limitToLast(postsLimit));
-    
+
     onValue(currentPostsQueryRef, (snapshot) => {
       const data = snapshot.val();
       postsList = [];
       if (data) {
-        Object.keys(data).forEach((key) => {
-          postsList.push({ id: key, ...data[key] });
+        Object.keys(data).forEach(id => {
+          postsList.push({ id, ...data[id] });
         });
-        postsList.sort((a, b) => b.createdAt - a.createdAt);
       }
+      postsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       renderFeed(getCurrentSearchQuery());
-      if (modalCurrentUid) {
-        renderModalUserPosts();
-      }
-    }, (error) => {
-      console.warn("Realtime database error reading posts:", error);
+      if (modalCurrentUid) renderModalUserPosts();
     });
   }
 
-  function setupPreviewContainers() {
-    if (elements.postBox) {
-      const previewDiv = document.createElement('div');
-      previewDiv.id = 'postPreviewContainer';
-      previewDiv.style.cssText = 'margin-top: 10px; display: none; position: relative;';
-      previewDiv.innerHTML = `
-        <div style="position: relative; display: inline-block; max-width: 100%;">
-          <img id="postPreviewImg" src="" style="max-height: 180px; max-width: 100%; border-radius: 8px; border: 1px solid #ddd; display: none;" />
-          <video id="postPreviewVid" controls style="max-height: 180px; max-width: 100%; border-radius: 8px; display: none;"></video>
-          <audio id="postPreviewAud" controls style="display: none; margin-top: 5px;"></audio>
-          <div id="postPreviewFile" style="padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px; font-size: 12px; display: none;"></div>
-          <button id="clearPostPreviewBtn" type="button" style="position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-size: 11px;"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-      `;
-      const actionsRow = elements.postBox.querySelector('.post-actions-row');
-      if (actionsRow) elements.postBox.insertBefore(previewDiv, actionsRow);
+  function renderFeed(searchQuery = '') {
+    const container = document.getElementById('feedContainer');
+    if (!container) return;
 
-      document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
+    let filtered = postsList;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filtered = postsList.filter(p => 
+        (p.content && p.content.toLowerCase().includes(q)) ||
+        (p.author && p.author.toLowerCase().includes(q))
+      );
     }
 
-    if (elements.chatPopup) {
-      const chatPreviewDiv = document.createElement('div');
-      chatPreviewDiv.id = 'chatPreviewContainer';
-      chatPreviewDiv.style.cssText = 'padding: 5px 10px; background: rgba(0,0,0,0.03); display: none; align-items: center; justify-content: space-between; font-size: 12px; border-top: 1px solid rgba(0,0,0,0.05);';
-      chatPreviewDiv.innerHTML = `
-        <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;"></span>
-        <button id="clearChatPreviewBtn" type="button" style="background: none; border: none; color: #888; cursor: pointer;"><i class="fa-solid fa-xmark"></i></button>
-      `;
-      const chatInputRow = elements.chatPopup.querySelector('.chat-input-row');
-      if (chatInputRow) elements.chatPopup.insertBefore(chatPreviewDiv, chatInputRow);
-
-      document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
-    }
-  }
-
-  function getCurrentSearchQuery() {
-    return elements.searchInput ? elements.searchInput.value.trim() : '';
-  }
-
-  function updateAuthView(isLoggedIn) {
-    if (isLoggedIn && currentUser) {
-      if (elements.authScreen) elements.authScreen.style.display = 'none';
-      if (elements.appContent) {
-        elements.appContent.style.display = 'block';
-        elements.appContent.classList.remove('hidden');
-      }
-      if (elements.signupBtn) elements.signupBtn.classList.add('hidden');
-      elements.logoutBtns.forEach(btn => btn.classList.remove('hidden'));
-      document.querySelectorAll('.user-profile').forEach(el => el.classList.remove('hidden'));
-      updateUserUI();
-    } else {
-      if (elements.authScreen) elements.authScreen.style.display = 'flex';
-      if (elements.appContent) {
-        elements.appContent.style.display = 'none';
-        elements.appContent.classList.add('hidden');
-      }
-      if (elements.signupBtn) elements.signupBtn.classList.remove('hidden');
-      elements.logoutBtns.forEach(btn => btn.classList.add('hidden'));
-      document.querySelectorAll('.user-profile').forEach(el => el.classList.add('hidden'));
-    }
-  }
-
-  function setAuthMode(signUp) {
-    isSignUpMode = signUp;
-    if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
-    
-    if (isSignUpMode) {
-      elements.tabSignupBtn?.classList.add('active');
-      elements.tabLoginBtn?.classList.remove('active');
-      elements.fullNameGroup?.classList.remove('hidden');
-      elements.phoneGroup?.classList.remove('hidden');
-      elements.districtGroup?.classList.remove('hidden');
-      elements.villageGroup?.classList.remove('hidden');
-      elements.forgotPasswordWrapper?.classList.add('hidden');
-      if (elements.pageAuthSubmitBtn) elements.pageAuthSubmitBtn.textContent = 'Create Account';
-      if (elements.authSwitchPrompt) {
-        elements.authSwitchPrompt.innerHTML = 'Already have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Log In</a>';
-      }
-    } else {
-      elements.tabLoginBtn?.classList.add('active');
-      elements.tabSignupBtn?.classList.remove('active');
-      elements.fullNameGroup?.classList.add('hidden');
-      elements.phoneGroup?.classList.add('hidden');
-      elements.districtGroup?.classList.add('hidden');
-      elements.villageGroup?.classList.add('hidden');
-      elements.forgotPasswordWrapper?.classList.remove('hidden');
-      if (elements.pageAuthSubmitBtn) elements.pageAuthSubmitBtn.textContent = 'Log In';
-      if (elements.authSwitchPrompt) {
-        elements.authSwitchPrompt.innerHTML = 'Don\'t have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Sign Up</a>';
-      }
-    }
-  }
-
-  async function handleAuthSubmit(e) {
-    e.preventDefault();
-    const isSignUp = elements.tabSignupBtn?.classList.contains('active');
-    
-    const email = elements.pageAuthEmail.value.trim();
-    const password = elements.pageAuthPassword.value.trim();
-    const name = elements.pageAuthName ? elements.pageAuthName.value.trim() : '';
-    const phone = elements.pageAuthPhone ? elements.pageAuthPhone.value.trim() : '';
-    const district = elements.pageAuthDistrict ? elements.pageAuthDistrict.value.trim() : '';
-    const village = elements.pageAuthVillage ? elements.pageAuthVillage.value.trim() : '';
-
-    if (!email || !password || (isSignUp && (!name || !phone || !district || !village))) {
-      if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please fill in all required fields.';
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="card" style="text-align: center; color: #888; padding: 25px 15px;">No posts match your query.</div>`;
       return;
     }
 
-    try {
-      if (isSignUp) {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        await updateProfile(user, { displayName: name });
-        try {
-          await update(ref(database, `users/${user.uid}`), { 
-            displayName: name, 
-            email: email, 
-            phone: phone,
-            district: district,
-            village: village,
-            uid: user.uid, 
-            isOnline: true 
-          });
-        } catch (dbErr) {
-          console.warn("Database user set warning:", dbErr);
-        }
-        showToast(`Welcome to Soroti Youth Forum, ${name}!`);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-        showToast(`Welcome back!`);
-      }
-      elements.pageAuthEmail.value = '';
-      elements.pageAuthPassword.value = '';
-      if (elements.pageAuthName) elements.pageAuthName.value = '';
-      if (elements.pageAuthPhone) elements.pageAuthPhone.value = '';
-      if (elements.pageAuthDistrict) elements.pageAuthDistrict.value = '';
-      if (elements.pageAuthVillage) elements.pageAuthVillage.value = '';
-    } catch (error) {
-      if (elements.authErrorMsg) {
-        if (error.code === 'auth/invalid-credential') {
-          elements.authErrorMsg.textContent = 'Incorrect email or password. If you do not have an account, click Sign Up.';
-        } else if (error.code === 'auth/user-not-found') {
-          elements.authErrorMsg.textContent = 'No account found with this email. Click Sign Up above to register.';
-        } else if (error.code === 'auth/wrong-password') {
-          elements.authErrorMsg.textContent = 'Incorrect password.';
-        } else {
-          elements.authErrorMsg.textContent = error.message.replace('Firebase: ', '');
-        }
-      }
-    }
-  }
-
-  async function handleLogout() {
-    if (confirm('Are you sure you want to log out?')) {
-      if (currentUser) {
-        await set(ref(database, `users/${currentUser.uid}/isOnline`), false);
-        await set(ref(database, `users/${currentUser.uid}/lastSeen`), serverTimestamp());
-      }
-      detachUserListeners();
-      await signOut(auth);
-    }
-  }
-
-  function updateUserUI() {
-    if (!currentUser) return;
-    elements.profileNames.forEach(el => el.textContent = currentUser.name);
-    elements.profileEmails.forEach(el => el.textContent = currentUser.email);
-    
-    elements.profileAvatars.forEach(el => {
-      applyAvatarStyle(el, currentUser.avatarUrl, currentUser.name);
-    });
-
-    const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
-    if (settingsAvatarPreview) {
-      applyAvatarStyle(settingsAvatarPreview, currentUser.avatarUrl, currentUser.name);
-      settingsAvatarPreview.onclick = () => window.openAvatarLightbox(currentUser.avatarUrl, currentUser.name);
-    }
-
-    const nameInput = document.getElementById('settingsNameInput');
-    const emailInput = document.getElementById('settingsEmailInput');
-    if (nameInput) nameInput.value = currentUser.name || '';
-    if (emailInput) emailInput.value = currentUser.email || '';
-  }
-
-  function renderFeed(filterQuery = '') {
-    if (!elements.feedContainer) return;
-
-    let displayPosts = postsList;
-    if (filterQuery) {
-      const q = filterQuery.toLowerCase();
-      displayPosts = postsList.filter(p => (p.content && p.content.toLowerCase().includes(q)) || (p.author && p.author.toLowerCase().includes(q)));
-    }
-
-    if (displayPosts.length === 0) {
-      elements.feedContainer.innerHTML = `
-        <div class="card">
-          <div class="animated-stripe-bar"></div>
-          <h3>No posts found</h3>
-          <p style="color: #888; margin-top: 8px; font-size: 14px;">Try another search term or share an update!</p>
-        </div>`;
-      return;
-    }
-
-    elements.feedContainer.innerHTML = displayPosts.map(post => {
-      const isOwner = currentUser && (currentUser.uid === post.uid || currentUser.email === post.authorEmail);
+    container.innerHTML = filtered.map(post => {
+      const isOwner = currentUser && (post.uid === currentUser.uid || post.authorEmail === currentUser.email);
       const isBookmarked = userBookmarks && userBookmarks[post.id];
-      
       const likesCount = post.likes ? Object.keys(post.likes).length : 0;
-      const isLiked = post.likes && currentUser && post.likes[currentUser.uid];
-
       const dislikesCount = post.dislikes ? Object.keys(post.dislikes).length : 0;
-      const isDisliked = post.dislikes && currentUser && post.dislikes[currentUser.uid];
+      const isLiked = currentUser && post.likes && post.likes[currentUser.uid];
+      const isDisliked = currentUser && post.dislikes && post.dislikes[currentUser.uid];
 
-      const commentsArray = post.comments ? Object.values(post.comments) : [];
+      const commentsArray = post.comments ? Object.keys(post.comments).map(k => ({ id: k, ...post.comments[k] })) : [];
+      commentsArray.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
-      let attachmentHTML = '';
+      let mediaHTML = '';
       if (post.attachment) {
         const type = post.attachmentType || '';
         if (type === 'image') {
-          attachmentHTML = `
-            <div class="media-attachment-container">
-              <img src="${escapeHTML(post.attachment)}" alt="Attached Photo" style="width: 100%; max-height: 400px; object-fit: contain; display: block;" />
-            </div>`;
+          mediaHTML = `<div class="media-attachment-container"><img src="${escapeHTML(post.attachment)}" style="width: 100%; max-height: 400px; object-fit: contain; background: #000; border-radius: 6px;" /></div>`;
         } else if (type === 'video') {
-          attachmentHTML = `
-            <div class="media-attachment-container">
-              <video src="${escapeHTML(post.attachment)}" controls style="max-height: 400px; width: 100%;"></video>
-            </div>`;
+          mediaHTML = `<div class="media-attachment-container"><video src="${escapeHTML(post.attachment)}" controls style="width: 100%; max-height: 400px; border-radius: 6px;"></video></div>`;
         } else if (type === 'audio') {
-          attachmentHTML = `
-            <div class="media-attachment-container" style="background: transparent;">
-              <audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio>
-            </div>`;
+          mediaHTML = `<div class="media-attachment-container" style="padding: 10px; background: var(--item-hover-bg);"><audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio></div>`;
         } else {
-          attachmentHTML = `
-            <div style="margin-bottom: 12px; font-size: 12px; opacity: 0.8; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.05);">
-              <i class="fa-solid fa-paperclip"></i> Attached File: <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: inherit; font-weight: bold;">${escapeHTML(post.attachmentName || 'Download Attachment')}</a>
+          mediaHTML = `
+            <div style="margin: 10px 0; padding: 10px; background: var(--item-hover-bg); border-radius: 6px; border: 1px solid var(--border-color);">
+              <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: var(--text-color); font-weight: bold; text-decoration: underline; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-file-arrow-down" style="color: var(--color-red);"></i> ${escapeHTML(post.attachmentName || 'Download File Attachment')}
+              </a>
             </div>`;
         }
       }
 
-      const displayTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
-      const authorUser = usersList.find(u => u.uid === post.uid);
-      const avatarUrl = post.authorAvatarUrl || (authorUser ? authorUser.avatarUrl : null);
+      const postTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
+      const authorInitials = getInitials(post.author);
 
       return `
-        <div class="card post-card" data-id="${post.id}">
-          <div class="animated-stripe-bar"></div>
-          
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${post.uid}')" title="View ${escapeHTML(post.author)}'s profile">
-              <div class="avatar-wrapper">
-                <div class="avatar" style="${avatarUrl ? `background-image: url('${avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">
-                  ${avatarUrl ? '' : escapeHTML(post.initials || 'SY')}
-                </div>
-              </div>
+        <div class="card post-card" id="post-${post.id}" style="margin-bottom: 15px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;" onclick="openUserProfile('${post.uid}')">
+              <div class="avatar" style="${post.authorAvatarUrl ? `background-image: url('${post.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${post.authorAvatarUrl ? '' : authorInitials}</div>
               <div>
-                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Anonymous')}</strong>
-                <span style="font-size: 11px; color: #888;">${escapeHTML(displayTime)} ${post.isEdited ? '<i style="font-size:10px;">(edited)</i>' : ''}</span>
+                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Youth Member')}</strong>
+                <span style="font-size: 11px; opacity: 0.6;">${escapeHTML(postTime)} ${post.isEdited ? '• (edited)' : ''}</span>
               </div>
             </div>
             
-            <div style="display: flex; gap: 8px; align-items: center;">
-              <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" onclick="toggleBookmark(this, '${post.id}')" title="Save Post">
-                <i class="${isBookmarked ? 'fa-solid' : 'fa-regular'} fa-bookmark"></i>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" onclick="toggleBookmark(this, '${post.id}')" title="Bookmark Post">
+                <i class="fa-solid fa-bookmark"></i>
               </button>
               ${isOwner ? `
-                <button onclick="toggleEditPost('${post.id}')" style="background: none; border: none; color: var(--text-color); opacity: 0.7; cursor: pointer; font-size: 13px;" title="Edit Post">
-                  <i class="fa-solid fa-pen-to-square"></i>
-                </button>
-                <button onclick="deletePost('${post.id}')" style="background: none; border: none; color: #e50914; cursor: pointer; font-size: 14px;" title="Delete Post">
-                  <i class="fa-solid fa-xmark"></i>
-                </button>
+                <button onclick="toggleEditPost('${post.id}')" title="Edit Post" style="background: none; border: none; color: var(--text-color); opacity: 0.6; cursor: pointer; font-size: 14px;"><i class="fa-solid fa-pen"></i></button>
+                <button onclick="deletePost('${post.id}')" title="Delete Post" style="background: none; border: none; color: var(--color-red); opacity: 0.8; cursor: pointer; font-size: 14px;"><i class="fa-solid fa-trash"></i></button>
               ` : ''}
             </div>
           </div>
-          
-          ${post.content ? `<p id="postContent-${post.id}" style="font-size: 14px; line-height: 1.5; margin-bottom: 10px;">${escapeHTML(post.content)}</p>` : ''}
-          
-          <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 12px;">
-            <textarea id="editPostInput-${post.id}" style="width: 100%; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; font-size: 13px; background: var(--card-bg); color: var(--text-color); resize: vertical;">${escapeHTML(post.content || '')}</textarea>
-            <div style="display: flex; gap: 8px; margin-top: 6px; justify-content: flex-end;">
-              <button onclick="toggleEditPost('${post.id}')" style="padding: 4px 10px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px; cursor: pointer; color: var(--text-color);">Cancel</button>
-              <button onclick="saveEditPost('${post.id}')" style="padding: 4px 12px; background: var(--color-red); color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer;">Save</button>
+
+          <div id="postContent-${post.id}">
+            ${post.content ? `<p style="font-size: 14px; line-height: 1.5; margin-bottom: 10px; white-space: pre-wrap;">${escapeHTML(post.content)}</p>` : ''}
+          </div>
+
+          <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 10px;">
+            <textarea id="editPostInput-${post.id}" style="width: 100%; height: 70px; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--card-bg); color: var(--text-color); font-size: 13px;">${escapeHTML(post.content || '')}</textarea>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 5px;">
+              <button class="chat-btn" style="background: var(--border-color); color: var(--text-color);" onclick="toggleEditPost('${post.id}')">Cancel</button>
+              <button class="chat-btn" style="background: var(--color-red); color: white;" onclick="saveEditPost('${post.id}')">Save</button>
             </div>
           </div>
 
-          ${attachmentHTML}
-          
-          <div style="display: flex; gap: 15px; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 10px; font-size: 13px; align-items: center;">
-            <button onclick="toggleLike('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${isLiked ? '#e50914' : 'inherit'};">
-              ${isLiked ? '<i class="fa-solid fa-heart"></i>' : '<i class="fa-regular fa-heart"></i>'} ${likesCount}
-            </button>
-            <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: ${isDisliked ? '#e50914' : 'inherit'};">
-              ${isDisliked ? '<i class="fa-solid fa-thumbs-down"></i>' : '<i class="fa-regular fa-thumbs-down"></i>'} ${dislikesCount}
-            </button>
-            <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; cursor: pointer; font-weight: bold; color: inherit;">
-              <i class="fa-solid fa-comment"></i> Comment (${commentsArray.length})
-            </button>
+          ${mediaHTML}
+
+          <!-- Reactions and Interactions Bar -->
+          <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); padding: 8px 0; margin-top: 10px;">
+            <div style="display: flex; gap: 15px;">
+              <button onclick="toggleLike('${post.id}')" style="background: none; border: none; color: ${isLiked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isLiked ? 'bold' : 'normal'}; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
+                <i class="${isLiked ? 'fa-solid' : 'fa-regular'} fa-thumbs-up"></i> ${likesCount}
+              </button>
+              <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; color: ${isDisliked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isDisliked ? 'bold' : 'normal'}; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
+                <i class="${isDisliked ? 'fa-solid' : 'fa-regular'} fa-thumbs-down"></i> ${dislikesCount}
+              </button>
+              <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; color: var(--text-color); cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;">
+                <i class="fa-regular fa-comment"></i> ${commentsArray.length}
+              </button>
+            </div>
           </div>
 
-          <!-- COMMENTS SECTION WITH CLICKABLE PROFILE AVATARS -->
-          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 8px;">
-            <div style="max-height: 140px; overflow-y: auto; margin-bottom: 8px;">
-              ${commentsArray.map(c => {
-                const commenter = usersList.find(u => u.uid === c.uid);
-                const cAvatarUrl = c.authorAvatarUrl || (commenter ? commenter.avatarUrl : null);
-                
-                return `
-                  <div style="font-size: 12px; background: rgba(0,0,0,0.03); padding: 6px 8px; border-radius: 6px; margin-bottom: 5px; display: flex; align-items: flex-start; gap: 8px;">
-                    <div class="avatar comment-avatar" style="${cAvatarUrl ? `background-image: url('${cAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}" ${c.uid ? `onclick="openUserProfile('${c.uid}')" style="cursor:pointer;" title="View Profile"` : ''}>
-                      ${cAvatarUrl ? '' : getInitials(c.author)}
+          <!-- Comment Section -->
+          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 10px; padding-top: 5px;">
+            <div id="commentsList-${post.id}" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px;">
+              ${commentsArray.length === 0 ? '<div style="font-size: 11px; color: #888; text-align: center; padding: 5px 0;">No comments yet.</div>' : commentsArray.map(c => `
+                <div style="display: flex; gap: 8px; margin-bottom: 8px; background: var(--item-hover-bg); padding: 6px 10px; border-radius: 8px;">
+                  <div class="comment-avatar avatar" style="${c.authorAvatarUrl ? `background-image: url('${c.authorAvatarUrl}'); background-size: cover; color: transparent;` : ''}">${c.authorAvatarUrl ? '' : getInitials(c.author)}</div>
+                  <div style="flex: 1;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <strong style="font-size: 12px;">${escapeHTML(c.author || 'User')}</strong>
+                      <span style="font-size: 10px; opacity: 0.6;">${c.createdAt ? timeAgo(c.createdAt) : ''}</span>
                     </div>
-                    <div style="flex: 1;">
-                      <strong style="cursor: pointer; color: var(--text-color);" ${c.uid ? `onclick="openUserProfile('${c.uid}')"` : ''}>${escapeHTML(c.author)}:</strong> ${escapeHTML(c.text)}
-                    </div>
+                    <p style="font-size: 12px; margin-top: 2px; line-height: 1.3;">${escapeHTML(c.text)}</p>
                   </div>
-                `;
-              }).join('')}
+                </div>
+              `).join('')}
             </div>
-            <div style="display: flex; gap: 5px;">
-              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex:1; padding: 6px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; outline: none; background: transparent; color: var(--text-color);" />
-              <button onclick="addComment('${post.id}')" style="padding: 6px 12px; background: var(--color-black); color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer;">Send</button>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex: 1; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; background: var(--card-bg); color: var(--text-color);" onkeypress="if(event.key === 'Enter') addComment('${post.id}')" />
+              <button class="chat-btn" style="padding: 6px 12px; font-size: 12px;" onclick="addComment('${post.id}')">Send</button>
             </div>
           </div>
 
@@ -1535,134 +1795,60 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('');
   }
 
-  async function handleCreatePost() {
-    const text = elements.postText.value.trim();
-    if (!text && !currentPostFile) {
-      showToast("Please enter some text or select a file to post.");
-      return;
-    }
+  function setupPreviewContainers() {
+    if (elements.postBox) {
+      let previewContainer = document.getElementById('postPreviewContainer');
+      if (!previewContainer) {
+        previewContainer = document.createElement('div');
+        previewContainer.id = 'postPreviewContainer';
+        previewContainer.style.display = 'none';
+        previewContainer.style.position = 'relative';
+        previewContainer.style.margin = '10px 0';
+        previewContainer.style.padding = '8px';
+        previewContainer.style.background = 'var(--item-hover-bg)';
+        previewContainer.style.borderRadius = '8px';
+        previewContainer.style.border = '1px dashed var(--border-color)';
 
-    if (!currentUser) {
-      showToast("Please log in to share updates.");
-      return;
-    }
+        previewContainer.innerHTML = `
+          <button type="button" id="clearPostPreviewBtn" style="position: absolute; top: 5px; right: 5px; background: var(--color-red); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10;"><i class="fa-solid fa-xmark"></i></button>
+          <img id="postPreviewImg" style="display: none; max-width: 100%; max-height: 200px; border-radius: 6px; object-fit: contain; margin: 0 auto;" />
+          <video id="postPreviewVid" controls style="display: none; max-width: 100%; max-height: 200px; border-radius: 6px; margin: 0 auto;"></video>
+          <audio id="postPreviewAud" controls style="display: none; width: 100%; margin-top: 5px;"></audio>
+          <div id="postPreviewFile" style="display: none; font-size: 12px; font-weight: bold; color: var(--text-color); padding: 5px 0;"></div>
+        `;
 
-    elements.postBtn.disabled = true;
-    elements.postBtn.textContent = 'Posting...';
+        const textarea = elements.postBox.querySelector('textarea');
+        if (textarea && textarea.nextSibling) {
+          elements.postBox.insertBefore(previewContainer, textarea.nextSibling);
+        } else {
+          elements.postBox.appendChild(previewContainer);
+        }
 
-    let mediaUrl = null;
-    let attachmentType = null;
-
-    if (currentPostFile) {
-      if (currentPostFile.type.startsWith('image/')) attachmentType = 'image';
-      else if (currentPostFile.type.startsWith('video/')) attachmentType = 'video';
-      else if (currentPostFile.type.startsWith('audio/')) attachmentType = 'audio';
-      else attachmentType = 'file';
-
-      mediaUrl = await uploadMediaFile(currentPostFile, 'post_attachments');
-    }
-
-    try {
-      const postsRef = ref(database, 'posts');
-      await push(postsRef, {
-        author: currentUser.name,
-        authorEmail: currentUser.email,
-        authorAvatarUrl: currentUser.avatarUrl || null,
-        uid: currentUser.uid,
-        initials: getInitials(currentUser.name),
-        content: text,
-        attachment: mediaUrl || null,
-        attachmentType: attachmentType,
-        attachmentName: currentPostFile ? currentPostFile.name : null,
-        createdAt: Date.now(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      });
-
-      elements.postText.value = '';
-      clearPostPreview();
-      showToast("Post published successfully!");
-    } catch (err) {
-      console.error("Error pushing post to Firebase:", err);
-      showToast("Failed to create post. Try again.");
-    } finally {
-      elements.postBtn.disabled = false;
-      elements.postBtn.textContent = 'Post';
-    }
-  }
-
-  async function handleSendChatMessage() {
-    const text = elements.chatInput.value.trim();
-    if ((!text && !currentChatFile) || !currentUser || !activeChatRoom) return;
-
-    elements.chatInput.value = '';
-
-    let mediaUrl = null;
-    let attachmentType = null;
-
-    if (currentChatFile) {
-      attachmentType = currentChatFile.type.startsWith('image/') ? 'image' : 'file';
-      mediaUrl = await uploadMediaFile(currentChatFile, 'chat_attachments');
-    }
-
-    try {
-      const roomRef = ref(database, `chats/${activeChatRoom}`);
-      await push(roomRef, {
-        senderUid: currentUser.uid,
-        senderName: currentUser.name,
-        text: text,
-        attachment: mediaUrl || null,
-        attachmentType: attachmentType,
-        attachmentName: currentChatFile ? currentChatFile.name : null,
-        read: false,
-        timestamp: Date.now()
-      });
-
-      const typingRef = ref(database, `typing/${activeChatRoom}/${currentUser.uid}`);
-      set(typingRef, false);
-
-      clearChatPreview();
-    } catch (err) {
-      console.error("Failed to send chat message:", err);
-      showToast("Message failed to send.");
-    }
-  }
-
-  function handleFileSelect(e, isChat = false) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (isChat) {
-      currentChatFile = file;
-      const chatPreviewDiv = document.getElementById('chatPreviewContainer');
-      const chatPreviewText = document.getElementById('chatPreviewText');
-      if (chatPreviewDiv && chatPreviewText) {
-        chatPreviewText.textContent = `Attached: ${file.name}`;
-        chatPreviewDiv.style.display = 'flex';
+        document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
       }
-    } else {
-      currentPostFile = file;
-      const previewDiv = document.getElementById('postPreviewContainer');
-      const img = document.getElementById('postPreviewImg');
-      const vid = document.getElementById('postPreviewVid');
-      const aud = document.getElementById('postPreviewAud');
-      const doc = document.getElementById('postPreviewFile');
+    }
 
-      if (!previewDiv) return;
-      previewDiv.style.display = 'block';
-      img.style.display = 'none';
-      vid.style.display = 'none';
-      aud.style.display = 'none';
-      doc.style.display = 'none';
+    if (elements.chatPopup) {
+      const inputRow = elements.chatPopup.querySelector('.chat-input-row');
+      let chatPreviewContainer = document.getElementById('chatPreviewContainer');
+      if (!chatPreviewContainer && inputRow) {
+        chatPreviewContainer = document.createElement('div');
+        chatPreviewContainer.id = 'chatPreviewContainer';
+        chatPreviewContainer.style.display = 'none';
+        chatPreviewContainer.style.alignItems = 'center';
+        chatPreviewContainer.style.justifyContent = 'space-between';
+        chatPreviewContainer.style.padding = '5px 10px';
+        chatPreviewContainer.style.background = 'var(--item-hover-bg)';
+        chatPreviewContainer.style.borderTop = '1px solid var(--border-color)';
+        chatPreviewContainer.style.fontSize = '12px';
 
-      const fileUrl = URL.createObjectURL(file);
-      if (file.type.startsWith('image/')) {
-        img.src = fileUrl; img.style.display = 'block';
-      } else if (file.type.startsWith('video/')) {
-        vid.src = fileUrl; vid.style.display = 'block';
-      } else if (file.type.startsWith('audio/')) {
-        aud.src = fileUrl; aud.style.display = 'block';
-      } else {
-        doc.textContent = `Attached File: ${file.name}`; doc.style.display = 'block';
+        chatPreviewContainer.innerHTML = `
+          <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; font-weight: 500;"></span>
+          <button type="button" id="clearChatPreviewBtn" style="background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 14px;"><i class="fa-solid fa-xmark"></i></button>
+        `;
+
+        elements.chatPopup.insertBefore(chatPreviewContainer, inputRow);
+        document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
       }
     }
   }
@@ -1671,213 +1857,15 @@ document.addEventListener('DOMContentLoaded', () => {
     currentPostFile = null;
     if (elements.postPhotoInput) elements.postPhotoInput.value = '';
     if (elements.postFileInput) elements.postFileInput.value = '';
-    const previewDiv = document.getElementById('postPreviewContainer');
-    if (previewDiv) previewDiv.style.display = 'none';
+    const previewContainer = document.getElementById('postPreviewContainer');
+    if (previewContainer) previewContainer.style.display = 'none';
   }
 
   function clearChatPreview() {
     currentChatFile = null;
     if (elements.chatFileInput) elements.chatFileInput.value = '';
-    const chatPreviewDiv = document.getElementById('chatPreviewContainer');
-    if (chatPreviewDiv) chatPreviewDiv.style.display = 'none';
-  }
-
-  function bindEvents() {
-    // Input Focus Tracking
-    document.addEventListener('focusin', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-        lastFocusedInput = e.target;
-      }
-    });
-
-    // Close Emoji Picker Dropdown on click outside
-    document.addEventListener('click', (e) => {
-      const emojiPicker = document.getElementById('emoji-picker-dropdown');
-      const isEmojiBtn = e.target.closest('.emoji-trigger-btn');
-      if (emojiPicker && !emojiPicker.contains(e.target) && !isEmojiBtn) {
-        emojiPicker.classList.add('hidden');
-      }
-    });
-
-    // Navigation Drawer Controls
-    elements.navBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        elements.navDrawer?.classList.add('open');
-        elements.drawerOverlay?.classList.add('active');
-      });
-    });
-
-    elements.drawerCloseBtn?.addEventListener('click', closeDrawer);
-    elements.drawerOverlay?.addEventListener('click', closeDrawer);
-
-    // Profile Click Listeners (Top bar & Nav Drawer user info)
-    const topBarUserProfile = document.getElementById('topBarUserProfile');
-    const drawerProfileInfo = document.getElementById('drawerProfileInfo');
-    
-    topBarUserProfile?.addEventListener('click', () => {
-      if (currentUser) window.openUserProfile(currentUser.uid);
-    });
-
-    drawerProfileInfo?.addEventListener('click', () => {
-      closeDrawer();
-      if (currentUser) window.openUserProfile(currentUser.uid);
-    });
-
-    // Close Modals
-    document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
-      document.getElementById('profileModal')?.classList.add('hidden');
-    });
-
-    document.getElementById('closeLightboxModalBtn')?.addEventListener('click', () => {
-      document.getElementById('avatarLightboxModal')?.classList.add('hidden');
-    });
-
-    document.getElementById('avatarLightboxModal')?.addEventListener('click', (e) => {
-      if (e.target.id === 'avatarLightboxModal') {
-        document.getElementById('avatarLightboxModal')?.classList.add('hidden');
-      }
-    });
-
-    // Auth Mode Toggles
-    elements.tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
-    elements.tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
-    
-    // Auth Redirect Link Delegate
-    elements.authSwitchPrompt?.addEventListener('click', (e) => {
-      if (e.target && e.target.id === 'authRedirectBtn') {
-        e.preventDefault();
-        setAuthMode(!isSignUpMode);
-      }
-    });
-
-    elements.authPageForm?.addEventListener('submit', handleAuthSubmit);
-
-    // Password Reset Listener
-    elements.forgotPasswordBtn?.addEventListener('click', async () => {
-      const email = elements.pageAuthEmail.value.trim();
-      if (!email) {
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please enter your email address to reset password.';
-        return;
-      }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        showToast('Password reset email sent! Check your inbox.');
-      } catch (err) {
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message.replace('Firebase: ', '');
-      }
-    });
-
-    elements.logoutBtns.forEach(btn => btn.addEventListener('click', handleLogout));
-
-    // Profile Picture Upload Listener inside Settings
-    const profilePicInput = document.getElementById('profilePicInput');
-    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-
-    profilePicInput?.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file || !currentUser) return;
-      
-      showToast("Uploading new profile picture...");
-      const uploadedUrl = await uploadMediaFile(file, 'profile_pictures');
-      
-      if (uploadedUrl) {
-        currentUser.avatarUrl = uploadedUrl;
-        await update(ref(database, `users/${currentUser.uid}`), { avatarUrl: uploadedUrl });
-        updateUserUI();
-        showToast("Profile picture updated!");
-      }
-    });
-
-    saveSettingsBtn?.addEventListener('click', async () => {
-      const nameInput = document.getElementById('settingsNameInput');
-      if (!nameInput || !currentUser) return;
-      
-      const newName = nameInput.value.trim();
-      if (newName && newName !== currentUser.name) {
-        currentUser.name = newName;
-        await updateProfile(auth.currentUser, { displayName: newName });
-        await update(ref(database, `users/${currentUser.uid}`), { displayName: newName });
-        updateUserUI();
-        showToast("Profile settings saved!");
-      } else {
-        showToast("Settings updated.");
-      }
-    });
-
-    // Post creation events
-    elements.postBtn?.addEventListener('click', handleCreatePost);
-    elements.postPhotoInput?.addEventListener('change', (e) => handleFileSelect(e, false));
-    elements.postFileInput?.addEventListener('change', (e) => handleFileSelect(e, false));
-
-    // Search action listeners
-    elements.searchActionBtn?.addEventListener('click', () => renderFeed(getCurrentSearchQuery()));
-    elements.searchInput?.addEventListener('keyup', (e) => {
-      if (e.key === 'Enter') renderFeed(getCurrentSearchQuery());
-    });
-
-    // Chat events
-    elements.chatSendBtn?.addEventListener('click', handleSendChatMessage);
-    elements.chatInput?.addEventListener('keyup', (e) => {
-      if (e.key === 'Enter') handleSendChatMessage();
-      else window.triggerTypingStatus();
-    });
-    elements.chatFileInput?.addEventListener('change', (e) => handleFileSelect(e, true));
-    elements.chatCloseBtn?.addEventListener('click', () => elements.chatPopup?.classList.add('hidden'));
-
-    // Call triggers
-    elements.voiceCallTrigger?.addEventListener('click', () => window.startCall(false));
-    elements.videoCallTrigger?.addEventListener('click', () => window.startCall(true));
-    document.getElementById('callEndBtn')?.addEventListener('click', window.endCall);
-
-    // Toast Close
-    elements.toastClose?.addEventListener('click', () => {
-      if (elements.toastNotice) elements.toastNotice.style.display = 'none';
-    });
-
-    // Tab items switching
-    elements.tabBtns.forEach(btn => {
-      btn.addEventListener('click', () => window.switchTab(btn.dataset.tab));
-    });
-
-    document.querySelectorAll('.nav-link-item').forEach(link => {
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        closeDrawer();
-        window.switchTab(link.dataset.tab);
-      });
-    });
-
-    // FAB and Back to top button
-    elements.fabBtn?.addEventListener('click', () => {
-      window.switchTab('posts');
-      elements.postText?.focus();
-    });
-
-    window.addEventListener('scroll', () => {
-      if (window.scrollY > 300) elements.backToTopBtn?.classList.remove('hidden');
-      else elements.backToTopBtn?.classList.add('hidden');
-    });
-
-    elements.backToTopBtn?.addEventListener('click', () => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-
-    // Infinite modal post loader on scroll
-    const modalPostsContainer = document.getElementById('modalUserPostsContainer');
-    modalPostsContainer?.addEventListener('scroll', () => {
-      if (modalPostsContainer.scrollTop + modalPostsContainer.clientHeight >= modalPostsContainer.scrollHeight - 20) {
-        modalPostsLimit += 5;
-        renderModalUserPosts();
-      }
-    });
-
-    // Load more feed posts button
-    elements.loadMorePostsBtn?.addEventListener('click', () => {
-      postsLimit += 15;
-      listenToPosts();
-    });
-
-    document.getElementById('markAllReadBtn')?.addEventListener('click', markAllNotificationsRead);
+    const chatPreviewContainer = document.getElementById('chatPreviewContainer');
+    if (chatPreviewContainer) chatPreviewContainer.style.display = 'none';
   }
 
   init();

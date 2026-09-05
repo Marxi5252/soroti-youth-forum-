@@ -296,18 +296,78 @@ body {
   cursor: pointer;
 }
 
-/* Background Ambient Blobs */
+/* Red, Yellow, and Black Gradient Light Globes */
 .ambient-blob {
   position: fixed;
-  width: 300px;
-  height: 300px;
   border-radius: 50%;
   filter: blur(80px);
   z-index: -1;
-  opacity: 0.15;
+  opacity: 0.28;
+  pointer-events: none;
+  animation: floatGlobe 12s ease-in-out infinite alternate;
 }
-.blob-1 { top: -50px; left: -50px; background: var(--color-red); }
-.blob-2 { bottom: -50px; right: -50px; background: var(--color-yellow); }
+
+.blob-1 {
+  width: 380px;
+  height: 380px;
+  top: -80px;
+  left: -80px;
+  background: radial-gradient(circle at center, var(--color-red) 0%, rgba(244, 208, 63, 0.4) 50%, var(--color-black) 100%);
+  animation-duration: 10s;
+}
+
+.blob-2 {
+  width: 350px;
+  height: 350px;
+  bottom: -60px;
+  right: -60px;
+  background: radial-gradient(circle at center, var(--color-yellow) 0%, rgba(229, 9, 20, 0.5) 55%, var(--color-black) 100%);
+  animation-duration: 14s;
+}
+
+.blob-3 {
+  width: 300px;
+  height: 300px;
+  top: 40%;
+  right: 10%;
+  background: radial-gradient(circle at center, rgba(229, 9, 20, 0.8) 0%, var(--color-yellow) 40%, var(--color-black) 90%);
+  animation-duration: 16s;
+}
+
+.blob-4 {
+  width: 320px;
+  height: 320px;
+  bottom: 20%;
+  left: 5%;
+  background: radial-gradient(circle at center, var(--color-yellow) 0%, rgba(17, 17, 17, 0.9) 60%, var(--color-red) 100%);
+  animation-duration: 11s;
+}
+
+@keyframes floatGlobe {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(25px, -30px) scale(1.1); }
+  100% { transform: translate(-20px, 20px) scale(0.95); }
+}
+
+/* Post Highlight Animation when navigated from profile modal */
+.highlight-post {
+  animation: postGlowFlash 2.5s ease-out;
+  border: 2px solid var(--color-red) !important;
+}
+
+@keyframes postGlowFlash {
+  0% {
+    box-shadow: 0 0 25px rgba(229, 9, 20, 0.9), 0 0 10px rgba(244, 208, 63, 0.8);
+    transform: scale(1.02);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(244, 208, 63, 0.6);
+  }
+  100% {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transform: scale(1);
+  }
+}
 
 /* Auth Screen */
 .auth-screen {
@@ -323,7 +383,7 @@ body {
   padding: 30px;
   border-radius: 12px;
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   box-shadow: 0 4px 15px rgba(0,0,0,0.1);
   border: 1px solid var(--border-color);
 }
@@ -333,7 +393,10 @@ body {
   font-size: 20px;
   color: var(--text-color);
   text-align: center;
-  margin-bottom: 5px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .auth-tagline {
@@ -416,7 +479,7 @@ body {
 header {
   background: var(--color-black);
   color: white;
-  padding: 15px 20px;
+  padding: 12px 20px;
   position: sticky;
   top: 0;
   z-index: 100;
@@ -437,11 +500,28 @@ header {
 .logo {
   font-weight: 800;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
 }
 
-.header-logo-img, .auth-logo-img {
-  max-height: 40px;
+/* ENHANCED & INCREASED LOGO SIZING */
+.header-logo-img {
+  max-height: 62px;
   width: auto;
+  object-fit: contain;
+  transition: transform 0.2s ease;
+}
+
+.auth-logo-img {
+  max-height: 95px;
+  width: auto;
+  object-fit: contain;
+  margin-bottom: 5px;
+  transition: transform 0.2s ease;
+}
+
+.header-logo-img:hover, .auth-logo-img:hover {
+  transform: scale(1.03);
 }
 
 .nav-btn {
@@ -712,6 +792,16 @@ header {
   display: block;
 }
 
+.text-blue-500 {
+  color: #3b82f6 !important;
+}
+
+.read-receipt {
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.8;
+}
+
 .create-post textarea {
   width: 100%;
   border: 1px solid var(--border-color);
@@ -974,4 +1064,14 @@ header {
   font-size: 16px;
   cursor: pointer;
   z-index: 900;
+}
+
+@media (max-width: 600px) {
+  .header-logo-img {
+    max-height: 50px;
+  }
+  
+  .auth-logo-img {
+    max-height: 75px;
+  }
 }
