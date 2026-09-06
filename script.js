@@ -54,11 +54,12 @@ let friendsList = [];
 let userBookmarks = {};
 let pendingRequests = [];
 let sentRequests = [];
+let callHistoryList = [];
 let currentUser = null;
-let postsLimit = 25;
+let postsLimit = 10;
 let currentPostsQueryRef = null;
+let isFeedLoading = false;
 
-// Modal Pagination & User State
 let modalCurrentUid = null;
 let modalPostsLimit = 5;
 
@@ -70,8 +71,8 @@ let activeChatCallback = null;
 let activeTypingListenerRef = null;
 let activeTypingListenerCallback = null;
 
-let notifRef = null;
-let notifCallback = null;
+let callHistoryRef = null;
+let callHistoryCallback = null;
 let friendsRef = null;
 let friendsCallback = null;
 let bookmarksRef = null;
@@ -86,6 +87,8 @@ let connectedCallback = null;
 let currentPostFile = null;
 let currentChatFile = null;
 let currentCallStream = null;
+let callStartTime = null;
+let activeCallType = 'voice';
 
 let typingTimeout = null;
 let lastFocusedInput = null;
@@ -252,7 +255,7 @@ function setupPresenceSystem(user) {
 }
 
 function detachUserListeners() {
-  if (notifRef && notifCallback) off(notifRef, 'value', notifCallback);
+  if (callHistoryRef && callHistoryCallback) off(callHistoryRef, 'value', callHistoryCallback);
   if (friendsRef && friendsCallback) off(friendsRef, 'value', friendsCallback);
   if (bookmarksRef && bookmarksCallback) off(bookmarksRef, 'value', bookmarksCallback);
   if (requestsRef && requestsCallback) off(requestsRef, 'value', requestsCallback);
@@ -261,7 +264,7 @@ function detachUserListeners() {
   if (activeChatRef && activeChatCallback) off(activeChatRef, 'value', activeChatCallback);
   if (activeTypingListenerRef && activeTypingListenerCallback) off(activeTypingListenerRef, 'value', activeTypingListenerCallback);
 
-  notifRef = null; notifCallback = null;
+  callHistoryRef = null; callHistoryCallback = null;
   friendsRef = null; friendsCallback = null;
   bookmarksRef = null; bookmarksCallback = null;
   requestsRef = null; requestsCallback = null;
@@ -279,7 +282,25 @@ function closeDrawer() {
 }
 
 // 5. GLOBAL INTERACTIVE WINDOW FUNCTIONS
+window.clearPostPreview = function() {
+  currentPostFile = null;
+  const previewContainer = document.getElementById('postPreviewContainer');
+  if (previewContainer) previewContainer.style.display = 'none';
+  const postPhotoInput = document.getElementById('postPhotoInput');
+  const postFileInput = document.getElementById('postFileInput');
+  if (postPhotoInput) postPhotoInput.value = '';
+  if (postFileInput) postFileInput.value = '';
+};
 
+window.clearChatPreview = function() {
+  currentChatFile = null;
+  const chatPreviewContainer = document.getElementById('chatPreviewContainer');
+  if (chatPreviewContainer) chatPreviewContainer.style.display = 'none';
+  const chatFileInput = document.getElementById('chatFileInput');
+  if (chatFileInput) chatFileInput.value = '';
+};
+
+// NAVIGATE TO POST WITH AUTOMATIC GLOW ENTRANCE & EXIT
 window.navigateToPost = function(postId) {
   const profileModal = document.getElementById('profileModal');
   if (profileModal) profileModal.classList.add('hidden');
@@ -299,9 +320,17 @@ window.navigateToPost = function(postId) {
 
     if (postEl) {
       postEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      // Trigger glow pulse entrance
       postEl.classList.remove('highlight-post');
-      void postEl.offsetWidth;
+      void postEl.offsetWidth; // Force CSS reflow
       postEl.classList.add('highlight-post');
+
+      // AUTOMATIC EXIT OF GLOW AFTER 3 SECONDS
+      setTimeout(() => {
+        postEl.classList.remove('highlight-post');
+      }, 3000);
+
       showToast('Navigated to post.');
     } else {
       showToast('Post could not be located in feed.');
@@ -411,7 +440,8 @@ window.markMessagesRead = async function(chatRoomId) {
   }
 };
 
-function renderModalUserPosts() {
+// AUTOMATIC CONTINUOUS SCROLL LOADING FOR PROFILE USER POSTS
+window.renderModalUserPosts = function() {
   const container = document.getElementById('modalUserPostsContainer');
   const badge = document.getElementById('modalPostsCountBadge');
   if (!container) return;
@@ -451,9 +481,27 @@ function renderModalUserPosts() {
   }).join('');
 
   if (modalPostsLimit < userPosts.length) {
-    container.innerHTML += `<div style="text-align: center; font-size: 11px; color: #888; padding: 8px 0; cursor: pointer;" onclick="modalPostsLimit+=5; renderModalUserPosts();"><i class="fa-solid fa-arrows-rotate"></i> Load more user posts...</div>`;
+    container.innerHTML += `
+      <div id="modalPostsScrollHint" style="text-align: center; font-size: 11px; color: #888; padding: 8px 0;">
+        <i class="fa-solid fa-circle-notch fa-spin"></i> Scroll down to load more user posts...
+      </div>
+    `;
   }
-}
+
+  // Attach continuous auto-scroll listener
+  if (!container.dataset.hasScrollListener) {
+    container.dataset.hasScrollListener = "true";
+    container.addEventListener('scroll', () => {
+      if (container.scrollTop + container.clientHeight >= container.scrollHeight - 30) {
+        const totalUserPosts = postsList.filter(p => p.uid === modalCurrentUid).length;
+        if (modalPostsLimit < totalUserPosts) {
+          modalPostsLimit += 5;
+          window.renderModalUserPosts();
+        }
+      }
+    });
+  }
+};
 
 window.openUserProfile = function(uid) {
   let user = usersList.find(u => u.uid === uid);
@@ -519,12 +567,17 @@ window.openUserProfile = function(uid) {
 
   modalCurrentUid = uid;
   modalPostsLimit = 5;
-  renderModalUserPosts();
+  window.renderModalUserPosts();
 
   if (modal) modal.classList.remove('hidden');
 };
 
 window.startCall = function(isVideo) {
+  if (!currentUser) {
+    showToast("Please log in to make calls.");
+    return;
+  }
+  activeCallType = isVideo ? 'video' : 'voice';
   const modal = document.getElementById('callModal');
   const statusText = document.getElementById('callStatusText');
   const userNameText = document.getElementById('callUserName');
@@ -535,37 +588,35 @@ window.startCall = function(isVideo) {
   if (!modal) return;
   modal.classList.remove('hidden');
   
-  const recipientName = activeChatRecipientName || 'User';
+  const recipientName = activeChatRecipientName || 'Member';
   if (userNameText) userNameText.textContent = recipientName;
   if (avatarEl) avatarEl.textContent = getInitials(recipientName);
 
   if (statusText) statusText.textContent = isVideo ? 'Connecting Video Call...' : 'Connecting Voice Call...';
+  callStartTime = Date.now();
 
-  if (isVideo && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+  const constraints = isVideo ? { video: true, audio: true } : { audio: true };
+
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia(constraints)
       .then(stream => {
         currentCallStream = stream;
-        if (videoPreview) videoPreview.classList.remove('hidden');
-        if (localVideo) localVideo.srcObject = stream;
-        if (statusText) statusText.textContent = 'Call Connected';
+        if (isVideo && videoPreview) {
+          videoPreview.classList.remove('hidden');
+          if (localVideo) localVideo.srcObject = stream;
+        }
+        if (statusText) statusText.textContent = isVideo ? 'Video Call Connected' : 'Voice Call Connected';
       })
       .catch(err => {
-        console.warn("Media device camera access error:", err);
-        if (statusText) statusText.textContent = 'Active Call (Audio Only)';
+        console.warn("Media device access error:", err);
+        if (statusText) statusText.textContent = 'Call Active (Audio simulated)';
       });
-  } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        currentCallStream = stream;
-        if (statusText) statusText.textContent = 'Voice Call Connected';
-      })
-      .catch(() => {
-        if (statusText) statusText.textContent = 'Active Call';
-      });
+  } else {
+    if (statusText) statusText.textContent = 'Call Connected';
   }
 };
 
-window.endCall = function() {
+window.endCall = async function() {
   const modal = document.getElementById('callModal');
   if (currentCallStream) {
     currentCallStream.getTracks().forEach(track => track.stop());
@@ -574,6 +625,38 @@ window.endCall = function() {
   if (modal) modal.classList.add('hidden');
   const videoPreview = document.getElementById('callVideoPreview');
   if (videoPreview) videoPreview.classList.add('hidden');
+
+  if (currentUser && activeChatRecipientUid) {
+    const durationSecs = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
+    const minutes = Math.floor(durationSecs / 60);
+    const seconds = durationSecs % 60;
+    const durationFormatted = `${minutes > 0 ? `${minutes}m ` : ''}${seconds}s`;
+
+    try {
+      const callRecordRef = push(ref(database, `calls/${currentUser.uid}`));
+      await set(callRecordRef, {
+        peerUid: activeChatRecipientUid,
+        peerName: activeChatRecipientName || 'Member',
+        type: activeCallType,
+        duration: durationFormatted,
+        createdAt: Date.now(),
+        status: 'Completed'
+      });
+
+      const recipientCallRecordRef = push(ref(database, `calls/${activeChatRecipientUid}`));
+      await set(recipientCallRecordRef, {
+        peerUid: currentUser.uid,
+        peerName: currentUser.name,
+        type: activeCallType,
+        duration: durationFormatted,
+        createdAt: Date.now(),
+        status: 'Completed'
+      });
+    } catch (err) {
+      console.warn("Could not save call history:", err);
+    }
+  }
+
   showToast('Call ended.');
 };
 
@@ -771,9 +854,9 @@ window.openChat = function(recipientUid, recipientName) {
   if (!chatPopup) return;
 
   activeChatRecipientUid = recipientUid;
-  activeChatRecipientName = recipientName || 'User';
+  activeChatRecipientName = recipientName || 'Member';
 
-  chatFriendName.textContent = `Chat with ${activeChatRecipientName}`;
+  chatFriendName.innerHTML = `<i class="fa-solid fa-grip-lines" style="margin-right: 6px; opacity: 0.6;"></i> Chat with ${escapeHTML(activeChatRecipientName)}`;
   chatPopup.classList.remove('hidden');
 
   const roomPath = recipientUid ? [currentUser.uid, recipientUid].sort().join('_') : 'global_room';
@@ -786,7 +869,7 @@ window.openChat = function(recipientUid, recipientName) {
     off(activeTypingListenerRef, 'value', activeTypingListenerCallback);
   }
 
-  chatMessages.innerHTML = `<div class="chat-msg system">Connecting to conversation...</div>`;
+  chatMessages.innerHTML = `<div class="chat-msg system">Private Chat - ${escapeHTML(activeChatRecipientName)}</div>`;
 
   activeTypingListenerRef = ref(database, `typing/${activeChatRoom}`);
   activeTypingListenerCallback = (snap) => {
@@ -821,7 +904,7 @@ window.openChat = function(recipientUid, recipientName) {
         if (msg.attachment) {
           const isImg = (msg.attachmentType === 'image') || msg.attachment.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i);
           if (isImg) {
-            html += `<div style="margin-top: 5px;"><img src="${escapeHTML(msg.attachment)}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block;" /></div>`;
+            html += `<div style="margin-top: 5px;"><img src="${escapeHTML(msg.attachment)}" style="max-width: 100%; max-height: 150px; border-radius: 6px; display: block; object-fit: cover;" /></div>`;
           } else {
             html += `
               <div style="margin-top: 5px; background: rgba(0,0,0,0.1); padding: 6px 10px; border-radius: 6px; font-size: 12px;">
@@ -863,1015 +946,947 @@ window.switchTab = function(tabName) {
   });
 };
 
-// 6. INITIALIZATION & CONTROLLERS
-document.addEventListener('DOMContentLoaded', () => {
+// 6. REALTIME FEED, USERS, & RENDER LOGIC
+function listenToPosts() {
+  if (currentPostsQueryRef) {
+    off(currentPostsQueryRef);
+  }
+  const postsRef = ref(database, 'posts');
+  currentPostsQueryRef = query(postsRef, limitToLast(postsLimit));
 
-  const themeToggleBtns = document.querySelectorAll('.themeToggleBtn');
-  const savedTheme = localStorage.getItem('theme');
-  const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  
-  if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
-    document.body.classList.add('dark-theme');
-    themeToggleBtns.forEach(btn => btn.innerHTML = '<i class="fa-solid fa-sun"></i> Light Mode');
+  onValue(currentPostsQueryRef, (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      postsList = Object.entries(data).map(([id, post]) => ({
+        id,
+        ...post
+      })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    } else {
+      postsList = [];
+    }
+    renderFeed(getCurrentSearchQuery());
+  }, (error) => {
+    console.error("Posts live listener error:", error);
+  });
+}
+
+function listenToUsers() {
+  const usersRef = ref(database, 'users');
+  onValue(usersRef, (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      usersList = Object.entries(data).map(([uid, u]) => ({
+        uid,
+        ...u
+      }));
+    } else {
+      usersList = [];
+    }
+    renderFeed(getCurrentSearchQuery());
+    renderSidebarMembers();
+    renderFriendsView();
+    renderChatsView();
+  });
+}
+
+function renderSidebarMembers() {
+  const sidebarContainer = document.getElementById('sidebarMembersContainer');
+  if (!sidebarContainer) return;
+
+  const onlineFriends = usersList.filter(u => currentUser && friendsList.includes(u.uid) && u.isOnline);
+  if (onlineFriends.length === 0) {
+    sidebarContainer.innerHTML = `<p style="font-size: 11px; color: #888;">No friends active right now.</p>`;
+    return;
   }
 
-  themeToggleBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.body.classList.toggle('dark-theme');
-      const isDark = document.body.classList.contains('dark-theme');
-      localStorage.setItem('theme', isDark ? 'dark' : 'light');
-      themeToggleBtns.forEach(b => {
-        b.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
-      });
+  sidebarContainer.innerHTML = onlineFriends.map(user => `
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; cursor: pointer;" onclick="openChatFromTab('${user.uid}', '${escapeHTML(user.displayName || user.name)}')">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div class="avatar profile-avatar online" style="width: 26px; height: 26px; font-size: 10px; ${user.avatarUrl ? `background-image: url('${user.avatarUrl}'); background-size: cover; background-position: center;` : ''}">${!user.avatarUrl ? getInitials(user.displayName || user.name) : ''}</div>
+        <span style="font-size: 12px; font-weight: 500; color: var(--text-color);">${escapeHTML(user.displayName || user.name)}</span>
+      </div>
+      <span style="width: 8px; height: 8px; background: #2ec4b6; border-radius: 50%;"></span>
+    </div>
+  `).join('');
+}
+
+function renderFeed(searchQuery = '') {
+  const feedContainer = document.getElementById('feedContainer');
+  if (!feedContainer) return;
+
+  let filteredPosts = postsList;
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filteredPosts = postsList.filter(p => 
+      (p.content && p.content.toLowerCase().includes(q)) ||
+      (p.author && p.author.toLowerCase().includes(q))
+    );
+  }
+
+  if (filteredPosts.length === 0) {
+    feedContainer.innerHTML = `
+      <div class="card" style="text-align: center; color: #888; padding: 30px 15px;">
+        <i class="fa-solid fa-newspaper" style="font-size: 32px; margin-bottom: 10px; color: var(--color-red);"></i>
+        <p>${searchQuery ? 'No posts matched your search criteria.' : 'No posts yet. Be the first to start a conversation!'}</p>
+      </div>
+    `;
+    return;
+  }
+
+  feedContainer.innerHTML = filteredPosts.map(post => {
+    const isOwner = currentUser && (post.uid === currentUser.uid || post.authorEmail === currentUser.email);
+    const postUser = post.uid ? usersList.find(u => u.uid === post.uid) : null;
+    const authorName = postUser?.displayName || post.author || 'Youth Member';
+    const authorAvatarUrl = postUser?.avatarUrl || post.authorAvatarUrl || null;
+    const isOnline = postUser ? postUser.isOnline : false;
+
+    const likesCount = post.likes ? Object.keys(post.likes).length : 0;
+    const dislikesCount = post.dislikes ? Object.keys(post.dislikes).length : 0;
+    const isLiked = currentUser && post.likes && post.likes[currentUser.uid];
+    const isDisliked = currentUser && post.dislikes && post.dislikes[currentUser.uid];
+    const isBookmarked = currentUser && userBookmarks[post.id];
+
+    const commentsArr = post.comments ? Object.entries(post.comments).map(([cid, c]) => ({ id: cid, ...c })) : [];
+    const commentsCount = commentsArr.length;
+
+    let attachmentMarkup = '';
+    if (post.attachment) {
+      const type = post.attachmentType || '';
+      if (type === 'image') {
+        attachmentMarkup = `<div class="media-attachment-container"><img src="${escapeHTML(post.attachment)}" alt="Post Image" style="width:100%; max-height:380px; object-fit:cover; display:block;" /></div>`;
+      } else if (type === 'video') {
+        attachmentMarkup = `<div class="media-attachment-container"><video src="${escapeHTML(post.attachment)}" controls style="width:100%; max-height:380px; display:block; object-fit:cover;"></video></div>`;
+      } else if (type === 'audio') {
+        attachmentMarkup = `<div style="margin-bottom:12px;"><audio src="${escapeHTML(post.attachment)}" controls style="width:100%;"></audio></div>`;
+      } else {
+        attachmentMarkup = `
+          <div style="margin-bottom: 12px; background: var(--item-hover-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);">
+            <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: var(--color-red); font-weight: bold; text-decoration: underline; display: inline-flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-file-arrow-down"></i> ${escapeHTML(post.attachmentName || 'Download File')}
+            </a>
+          </div>
+        `;
+      }
+    }
+
+    const commentsListHTML = commentsArr.map(comment => {
+      const commentUser = comment.uid ? usersList.find(u => u.uid === comment.uid) : null;
+      const commentAvatar = commentUser?.avatarUrl || comment.authorAvatarUrl || null;
+      const commentAuthorName = commentUser?.displayName || comment.author || 'Youth Member';
+      const commentUid = comment.uid || '';
+
+      const avatarInitials = getInitials(commentAuthorName);
+      const avatarStyle = commentAvatar ? `background-image: url('${commentAvatar}'); background-size: cover; background-position: center; text-indent: -9999px;` : '';
+      const clickHandlerAttr = commentUid ? `onclick="openUserProfile('${commentUid}')"` : '';
+
+      return `
+        <div style="display: flex; gap: 10px; margin-top: 10px; align-items: flex-start;">
+          <div class="avatar comment-avatar" ${clickHandlerAttr} style="${avatarStyle}" title="Click to view ${escapeHTML(commentAuthorName)}'s profile">
+            ${avatarAvatarText(avatarInitials, commentAvatar)}
+          </div>
+          <div style="background: var(--item-hover-bg); border-radius: 8px; padding: 8px 12px; flex: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span class="comment-author-name" ${clickHandlerAttr} title="Click to view profile">${escapeHTML(commentAuthorName)}</span>
+              <span style="font-size: 10px; opacity: 0.6;">${timeAgo(comment.createdAt)}</span>
+            </div>
+            <p style="font-size: 12px; margin-top: 4px; line-height: 1.3;">${escapeHTML(comment.text)}</p>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const postTimeFormatted = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
+
+    return `
+      <div class="card" id="post-${post.id}">
+        <div class="animated-stripe-bar"></div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;" onclick="openUserProfile('${post.uid}')">
+            <div class="avatar profile-avatar ${isOnline ? 'online' : ''}" style="${authorAvatarUrl ? `background-image: url('${authorAvatarUrl}'); background-size: cover; background-position: center;` : ''}">
+              ${!authorAvatarUrl ? getInitials(authorName) : ''}
+            </div>
+            <div>
+              <h4 style="font-size: 14px; margin: 0; font-weight: bold; color: var(--text-color);">${escapeHTML(authorName)}</h4>
+              <span style="font-size: 11px; opacity: 0.6;">${escapeHTML(postTimeFormatted)}${post.isEdited ? ' (edited)' : ''}</span>
+            </div>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" onclick="toggleBookmark(this, '${post.id}')" title="Bookmark Post">
+              <i class="fa-solid fa-bookmark"></i>
+            </button>
+            ${isOwner ? `
+              <button style="background: none; border: none; color: var(--text-color); opacity: 0.6; cursor: pointer;" onclick="toggleEditPost('${post.id}')" title="Edit Post">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              <button style="background: none; border: none; color: var(--color-red); cursor: pointer;" onclick="deletePost('${post.id}')" title="Delete Post">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            ` : ''}
+          </div>
+        </div>
+
+        <div id="postContent-${post.id}">
+          ${post.content ? `<p style="font-size: 14px; line-height: 1.5; margin-bottom: 12px; white-space: pre-line;">${escapeHTML(post.content)}</p>` : ''}
+        </div>
+
+        <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 12px;">
+          <textarea id="editPostInput-${post.id}" style="width: 100%; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; font-size: 13px; background: var(--card-bg); color: var(--text-color);">${escapeHTML(post.content || '')}</textarea>
+          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;">
+            <button class="post-btn" style="padding: 4px 10px; font-size: 12px;" onclick="saveEditPost('${post.id}')">Save</button>
+            <button class="chat-btn" style="padding: 4px 10px; font-size: 12px;" onclick="toggleEditPost('${post.id}')">Cancel</button>
+          </div>
+        </div>
+
+        ${attachmentMarkup}
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 10px; margin-top: 10px;">
+          <div style="display: flex; gap: 15px;">
+            <button style="background: none; border: none; color: ${isLiked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: bold; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;" onclick="toggleLike('${post.id}')">
+              <i class="fa-${isLiked ? 'solid' : 'regular'} fa-thumbs-up"></i> <span>${likesCount}</span>
+            </button>
+            <button style="background: none; border: none; color: ${isDisliked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: bold; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;" onclick="toggleDislike('${post.id}')">
+              <i class="fa-${isDisliked ? 'solid' : 'regular'} fa-thumbs-down"></i> <span>${dislikesCount}</span>
+            </button>
+            <button style="background: none; border: none; color: var(--text-color); font-weight: bold; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px;" onclick="toggleCommentSection('${post.id}')">
+              <i class="fa-regular fa-comment"></i> <span>${commentsCount}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- COMMENT SECTION -->
+        <div id="commentSection-${post.id}" class="hidden" style="margin-top: 12px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+          <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+            <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 20px; outline: none; font-size: 12px; background: var(--card-bg); color: var(--text-color);" onkeypress="if(event.key === 'Enter') addComment('${post.id}')" />
+            <button class="post-btn" style="border-radius: 20px; padding: 6px 14px; font-size: 12px;" onclick="addComment('${post.id}')">Send</button>
+          </div>
+          <div id="commentsList-${post.id}">
+            ${commentsListHTML}
+          </div>
+        </div>
+
+      </div>
+    `;
+  }).join('');
+}
+
+function avatarAvatarText(initials, avatarUrl) {
+  return avatarUrl ? '' : initials;
+}
+
+function renderFriendsView() {
+  const container = document.getElementById('friendsListContainer');
+  if (!container) return;
+
+  const pendingHTML = pendingRequests.map(req => `
+    <div style="display: flex; justify-content: space-between; align-items: center; background: var(--item-hover-bg); padding: 10px; border-radius: 8px; margin-bottom: 8px;">
+      <span style="font-weight: bold; font-size: 13px;">${escapeHTML(req.fromName)}</span>
+      <button class="post-btn" style="padding: 4px 10px; font-size: 12px;" onclick="acceptFriendRequest('${req.uid}', '${escapeHTML(req.fromName)}')">Accept</button>
+    </div>
+  `).join('');
+
+  const networkMembers = usersList.filter(u => currentUser && u.uid !== currentUser.uid);
+
+  const membersHTML = networkMembers.map(user => {
+    const isFriend = friendsList.includes(user.uid);
+    const isSent = sentRequests.includes(user.uid);
+    const displayName = user.displayName || user.name || 'Member';
+
+    let actionBtn = `<button class="chat-btn" style="font-size: 11px;" onclick="sendFriendRequest('${user.uid}')"><i class="fa-solid fa-user-plus"></i> Add</button>`;
+    if (isFriend) {
+      actionBtn = `<button class="chat-btn" style="background: var(--color-red); font-size: 11px;" onclick="openChatFromTab('${user.uid}', '${escapeHTML(displayName)}')"><i class="fa-solid fa-comment"></i> Chat</button>`;
+    } else if (isSent) {
+      actionBtn = `<button class="chat-btn" disabled style="opacity: 0.6; font-size: 11px;"><i class="fa-solid fa-clock"></i> Sent</button>`;
+    }
+
+    return `
+      <div class="friend-item" style="padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+        <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${user.uid}')">
+          <div class="avatar profile-avatar ${user.isOnline ? 'online' : ''}" style="${user.avatarUrl ? `background-image: url('${user.avatarUrl}'); background-size: cover; background-position: center;` : ''}">
+            ${!user.avatarUrl ? getInitials(displayName) : ''}
+          </div>
+          <div>
+            <div style="font-weight: bold; font-size: 13px; color: var(--text-color);">${escapeHTML(displayName)}</div>
+            <div style="font-size: 11px; opacity: 0.6;">${user.district ? escapeHTML(user.district) : 'Youth Network Member'}</div>
+          </div>
+        </div>
+        ${actionBtn}
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    ${pendingRequests.length > 0 ? `
+      <div style="margin-bottom: 15px;">
+        <h4 style="font-size: 13px; margin-bottom: 8px; color: var(--color-red);">Pending Requests</h4>
+        ${pendingHTML}
+      </div>
+    ` : ''}
+    <div>
+      <h4 style="font-size: 13px; margin-bottom: 10px;">Network Members</h4>
+      ${membersHTML || '<p style="font-size: 12px; color: #888;">No other members registered yet.</p>'}
+    </div>
+  `;
+}
+
+function renderChatsView() {
+  const container = document.getElementById('chatsListContainer');
+  if (!container) return;
+
+  const friends = usersList.filter(u => currentUser && friendsList.includes(u.uid));
+
+  if (friends.length === 0) {
+    container.innerHTML = `<p style="font-size: 13px; color: #888; padding: 15px 0;">No chat friends yet. Add friends from the 'Friends' tab to start chatting!</p>`;
+    return;
+  }
+
+  container.innerHTML = friends.map(friend => {
+    const displayName = friend.displayName || friend.name || 'Member';
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer;" onclick="openChatFromTab('${friend.uid}', '${escapeHTML(displayName)}')">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="avatar profile-avatar ${friend.isOnline ? 'online' : ''}" style="${friend.avatarUrl ? `background-image: url('${friend.avatarUrl}'); background-size: cover; background-position: center;` : ''}">
+            ${!friend.avatarUrl ? getInitials(displayName) : ''}
+          </div>
+          <div>
+            <div style="font-weight: bold; font-size: 13px; color: var(--text-color);">${escapeHTML(displayName)}</div>
+            <div style="font-size: 11px; opacity: 0.6;">${friend.isOnline ? 'Active Now' : 'Offline'}</div>
+          </div>
+        </div>
+        <button class="chat-btn" style="font-size: 11px;"><i class="fa-solid fa-comment"></i> Chat</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderCallHistoryView() {
+  const container = document.getElementById('callHistoryContainer');
+  if (!container) return;
+
+  if (callHistoryList.length === 0) {
+    container.innerHTML = `<p style="font-size: 12px; color: #888; text-align: center; padding: 15px 0;">No recent calls logged.</p>`;
+    return;
+  }
+
+  container.innerHTML = callHistoryList.map(call => `
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 12px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <i class="fa-solid ${call.type === 'video' ? 'fa-video' : 'fa-phone'}" style="color: var(--color-red);"></i>
+        <div>
+          <div style="font-weight: bold;">${escapeHTML(call.peerName)}</div>
+          <div style="font-size: 10px; opacity: 0.6;">${timeAgo(call.createdAt)} • Duration: ${escapeHTML(call.duration || '0s')}</div>
+        </div>
+      </div>
+      <span style="font-size: 11px; color: #2ec4b6; font-weight: bold;">${escapeHTML(call.status || 'Completed')}</span>
+    </div>
+  `).join('');
+}
+
+// 7. INITIALIZATION & APP EVENT LISTENERS
+document.addEventListener('DOMContentLoaded', () => {
+
+  // Movable Chat Area Implementation via Header Dragging
+  const chatPopup = document.getElementById('chatPopup');
+  const chatHeader = document.getElementById('chatHeader');
+  if (chatPopup && chatHeader) {
+    let isDragging = false;
+    let startX = 0, startY = 0, initialX = 0, initialY = 0;
+
+    chatHeader.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return; // ignore control buttons
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = chatPopup.getBoundingClientRect();
+      initialX = rect.left;
+      initialY = rect.top;
+      chatPopup.style.right = 'auto';
+      chatPopup.style.bottom = 'auto';
+      chatPopup.style.left = `${initialX}px`;
+      chatPopup.style.top = `${initialY}px`;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      chatPopup.style.left = `${initialX + dx}px`;
+      chatPopup.style.top = `${initialY + dy}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    // Touch support for mobile dragging
+    chatHeader.addEventListener('touchstart', (e) => {
+      if (e.target.closest('button')) return;
+      const touch = e.touches[0];
+      isDragging = true;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      const rect = chatPopup.getBoundingClientRect();
+      initialX = rect.left;
+      initialY = rect.top;
+      chatPopup.style.right = 'auto';
+      chatPopup.style.bottom = 'auto';
+      chatPopup.style.left = `${initialX}px`;
+      chatPopup.style.top = `${initialY}px`;
+    });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      chatPopup.style.left = `${initialX + dx}px`;
+      chatPopup.style.top = `${initialY + dy}px`;
+    });
+
+    document.addEventListener('touchend', () => {
+      isDragging = false;
+    });
+  }
+
+  // Automatic Infinite Scroll Feed Loading (Replaces load buttons)
+  window.addEventListener('scroll', () => {
+    if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 400) {
+      if (!isFeedLoading) {
+        isFeedLoading = true;
+        postsLimit += 10;
+        listenToPosts();
+        setTimeout(() => { isFeedLoading = false; }, 1000);
+      }
+    }
+  });
+
+  // Authentication mode toggles
+  const tabLoginBtn = document.getElementById('tabLoginBtn');
+  const tabSignupBtn = document.getElementById('tabSignupBtn');
+  const fullNameGroup = document.getElementById('fullNameGroup');
+  const phoneGroup = document.getElementById('phoneGroup');
+  const districtGroup = document.getElementById('districtGroup');
+  const villageGroup = document.getElementById('villageGroup');
+  const pageAuthSubmitBtn = document.getElementById('pageAuthSubmitBtn');
+  const authRedirectBtn = document.getElementById('authRedirectBtn');
+  const authSwitchPrompt = document.getElementById('authSwitchPrompt');
+  const forgotPasswordWrapper = document.getElementById('forgotPasswordWrapper');
+  const authErrorMsg = document.getElementById('authErrorMsg');
+
+  let isSignupMode = false;
+
+  function setAuthMode(signup) {
+    isSignupMode = signup;
+    if (authErrorMsg) authErrorMsg.innerHTML = '';
+    if (signup) {
+      tabLoginBtn?.classList.remove('active');
+      tabSignupBtn?.classList.add('active');
+      fullNameGroup?.classList.remove('hidden');
+      phoneGroup?.classList.remove('hidden');
+      districtGroup?.classList.remove('hidden');
+      villageGroup?.classList.remove('hidden');
+      forgotPasswordWrapper?.classList.add('hidden');
+      if (pageAuthSubmitBtn) pageAuthSubmitBtn.textContent = 'Create Account';
+      if (authSwitchPrompt) authSwitchPrompt.innerHTML = `Already have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Log In</a>`;
+    } else {
+      tabSignupBtn?.classList.remove('active');
+      tabLoginBtn?.classList.add('active');
+      fullNameGroup?.classList.add('hidden');
+      phoneGroup?.classList.add('hidden');
+      districtGroup?.classList.add('hidden');
+      villageGroup?.classList.add('hidden');
+      forgotPasswordWrapper?.classList.remove('hidden');
+      if (pageAuthSubmitBtn) pageAuthSubmitBtn.textContent = 'Log In';
+      if (authSwitchPrompt) authSwitchPrompt.innerHTML = `Don't have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Sign Up</a>`;
+    }
+    document.getElementById('authRedirectBtn')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      setAuthMode(!isSignupMode);
+    });
+  }
+
+  tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
+  tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
+  authRedirectBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    setAuthMode(!isSignupMode);
+  });
+
+  // Auth Form Submission
+  document.getElementById('authPageForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('pageAuthEmail').value.trim();
+    const password = document.getElementById('pageAuthPassword').value;
+
+    if (authErrorMsg) authErrorMsg.innerHTML = '';
+
+    try {
+      if (isSignupMode) {
+        const fullName = document.getElementById('pageAuthName').value.trim();
+        const phone = document.getElementById('pageAuthPhone').value.trim();
+        const district = document.getElementById('pageAuthDistrict').value.trim();
+        const village = document.getElementById('pageAuthVillage').value.trim();
+
+        if (!fullName) {
+          throw new Error("Please enter your full name.");
+        }
+
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(cred.user, { displayName: fullName });
+
+        await set(ref(database, `users/${cred.user.uid}`), {
+          uid: cred.user.uid,
+          name: fullName,
+          displayName: fullName,
+          email: email,
+          phone: phone,
+          district: district,
+          village: village,
+          createdAt: Date.now(),
+          isOnline: true
+        });
+
+        showToast("Account created successfully!");
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        showToast("Logged in successfully!");
+      }
+    } catch (err) {
+      console.error("Auth error:", err);
+      if (authErrorMsg) authErrorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${err.message}`;
+    }
+  });
+
+  // Forgot Password Handler
+  document.getElementById('forgotPasswordBtn')?.addEventListener('click', async () => {
+    const emailInput = document.getElementById('pageAuthEmail');
+    const email = emailInput ? emailInput.value.trim() : '';
+    if (!email) {
+      showToast("Please enter your email address first.");
+      emailInput?.focus();
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      showToast("Password reset email sent! Check your inbox.");
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
+  // Navigation Drawer controls
+  const navDrawer = document.getElementById('navDrawer');
+  const drawerOverlay = document.getElementById('drawerOverlay');
+  document.querySelector('.nav-btn')?.addEventListener('click', () => {
+    navDrawer?.classList.add('open');
+    drawerOverlay?.classList.add('active');
+  });
+  drawerOverlay?.addEventListener('click', closeDrawer);
+  document.getElementById('drawerCloseBtn')?.addEventListener('click', closeDrawer);
+
+  // Drawer menu items navigation
+  document.querySelectorAll('.nav-link-item').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const tab = link.dataset.tab;
+      window.switchTab(tab);
+      closeDrawer();
     });
   });
 
-  let isSignUpMode = false;
+  // Header tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      window.switchTab(btn.dataset.tab);
+    });
+  });
 
-  const elements = {
-    authScreen: document.getElementById('authScreen'),
-    appContent: document.getElementById('appContent'),
-    authPageForm: document.getElementById('authPageForm'),
-    tabLoginBtn: document.getElementById('tabLoginBtn'),
-    tabSignupBtn: document.getElementById('tabSignupBtn'),
-    fullNameGroup: document.getElementById('fullNameGroup'),
-    phoneGroup: document.getElementById('phoneGroup'),
-    districtGroup: document.getElementById('districtGroup'),
-    villageGroup: document.getElementById('villageGroup'),
-    pageAuthName: document.getElementById('pageAuthName'),
-    pageAuthPhone: document.getElementById('pageAuthPhone'),
-    pageAuthDistrict: document.getElementById('pageAuthDistrict'),
-    pageAuthVillage: document.getElementById('pageAuthVillage'),
-    pageAuthEmail: document.getElementById('pageAuthEmail'),
-    pageAuthPassword: document.getElementById('pageAuthPassword'),
-    pageAuthSubmitBtn: document.getElementById('pageAuthSubmitBtn'),
-    authErrorMsg: document.getElementById('authErrorMsg'),
-    forgotPasswordBtn: document.getElementById('forgotPasswordBtn'),
-    forgotPasswordWrapper: document.getElementById('forgotPasswordWrapper'),
-    authSwitchPrompt: document.getElementById('authSwitchPrompt'),
+  // FAB Speed Dial Toggle
+  const fabBtn = document.getElementById('fabBtn');
+  const fabOptions = document.getElementById('fabOptions');
+  fabBtn?.addEventListener('click', () => {
+    fabBtn.classList.toggle('active');
+    fabOptions?.classList.toggle('hidden');
+  });
 
-    navDrawer: document.getElementById('navDrawer'),
-    drawerOverlay: document.getElementById('drawerOverlay'),
-    navBtns: document.querySelectorAll('.nav-btn'),
-    drawerCloseBtn: document.getElementById('drawerCloseBtn'),
-    
-    profileNames: document.querySelectorAll('.profile-name'),
-    profileEmails: document.querySelectorAll('.profile-email'),
-    profileAvatars: document.querySelectorAll('.profile-avatar'),
-    
-    logoutBtns: document.querySelectorAll('.logout-btn'),
-    signupBtn: document.querySelector('.signup-btn'),
-    searchInput: document.getElementById('searchInput'),
-    searchActionBtn: document.getElementById('searchActionBtn'),
+  document.getElementById('fabChatBtn')?.addEventListener('click', () => {
+    window.switchTab('chats');
+    fabBtn?.classList.remove('active');
+    fabOptions?.classList.add('hidden');
+  });
 
-    postText: document.getElementById('postText'),
-    postPhotoInput: document.getElementById('postPhotoInput'),
-    postFileInput: document.getElementById('postFileInput'),
-    postBtn: document.getElementById('createPostSubmitBtn'),
-    postBox: document.getElementById('postBox'),
-    feedContainer: document.getElementById('feedContainer'),
-    loadMorePostsBtn: document.getElementById('loadMorePostsBtn'),
-    
-    fabBtn: document.getElementById('fabBtn'),
-    fabOptions: document.getElementById('fabOptions'),
-    fabChatBtn: document.getElementById('fabChatBtn'),
-    fabCreatePostBtn: document.getElementById('fabCreatePostBtn'),
-    fabContainer: document.getElementById('fabContainer'),
-
-    backToTopBtn: document.getElementById('backToTopBtn'),
-    toastNotice: document.getElementById('toastNotice'),
-    toastClose: document.getElementById('toastCloseBtn'),
-
-    chatPopup: document.getElementById('chatPopup'),
-    chatFriendName: document.getElementById('chatFriendName'),
-    chatMessages: document.getElementById('chatMessages'),
-    chatInput: document.getElementById('chatInput'),
-    chatFileInput: document.getElementById('chatFileInput'),
-    chatSendBtn: document.getElementById('chatSendBtn'),
-    chatCloseBtn: document.getElementById('chatCloseBtn'),
-    
-    voiceCallTrigger: document.getElementById('voiceCallTrigger'),
-    videoCallTrigger: document.getElementById('videoCallTrigger'),
-
-    tabBtns: document.querySelectorAll('.tab-btn'),
-    tabViews: document.querySelectorAll('.tab-view')
-  };
-
-  function init() {
-    setupPreviewContainers();
-    bindEvents();
-    listenToAuthState();
-    listenToPosts();
-    listenToUsers();
+  document.getElementById('fabCreatePostBtn')?.addEventListener('click', () => {
     window.switchTab('posts');
-  }
+    document.getElementById('postText')?.focus();
+    fabBtn?.classList.remove('active');
+    fabOptions?.classList.add('hidden');
+  });
 
-  function updateAuthView(isLoggedIn) {
-    if (isLoggedIn) {
-      if (elements.authScreen) elements.authScreen.classList.add('hidden');
-      if (elements.appContent) elements.appContent.classList.remove('hidden');
-      
-      const displayName = currentUser.name || 'Member';
-      elements.profileNames.forEach(el => el.textContent = displayName);
-      elements.profileEmails.forEach(el => el.textContent = currentUser.email || '');
-      elements.profileAvatars.forEach(el => applyAvatarStyle(el, currentUser.avatarUrl, displayName));
-      
-      const topBarUserProfile = document.getElementById('topBarUserProfile');
-      if (topBarUserProfile) topBarUserProfile.classList.remove('hidden');
-      if (elements.signupBtn) elements.signupBtn.classList.add('hidden');
-
-      const settingsNameInput = document.getElementById('settingsNameInput');
-      const settingsEmailInput = document.getElementById('settingsEmailInput');
-      const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
-
-      if (settingsNameInput) settingsNameInput.value = displayName;
-      if (settingsEmailInput) settingsEmailInput.value = currentUser.email || '';
-      if (settingsAvatarPreview) applyAvatarStyle(settingsAvatarPreview, currentUser.avatarUrl, displayName);
+  // Back to Top Button
+  const backToTopBtn = document.getElementById('backToTopBtn');
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 300) {
+      backToTopBtn?.classList.remove('hidden');
     } else {
-      if (elements.authScreen) elements.authScreen.classList.remove('hidden');
-      if (elements.appContent) elements.appContent.classList.add('hidden');
-      const topBarUserProfile = document.getElementById('topBarUserProfile');
-      if (topBarUserProfile) topBarUserProfile.classList.add('hidden');
-      if (elements.signupBtn) elements.signupBtn.classList.remove('hidden');
+      backToTopBtn?.classList.add('hidden');
     }
-  }
+  });
+  backToTopBtn?.addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
 
-  function setAuthMode(signUp) {
-    isSignUpMode = signUp;
-    elements.tabLoginBtn.classList.toggle('active', !isSignUpMode);
-    elements.tabSignupBtn.classList.toggle('active', isSignUpMode);
-    
-    elements.fullNameGroup.classList.toggle('hidden', !isSignUpMode);
-    elements.phoneGroup.classList.toggle('hidden', !isSignUpMode);
-    elements.districtGroup.classList.toggle('hidden', !isSignUpMode);
-    elements.villageGroup.classList.toggle('hidden', !isSignUpMode);
-    
-    if (elements.forgotPasswordWrapper) {
-      elements.forgotPasswordWrapper.style.display = isSignUpMode ? 'none' : 'block';
+  // Dark/Light Mode Toggles
+  document.querySelectorAll('.themeToggleBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.body.classList.toggle('dark-theme');
+      const isDark = document.body.classList.contains('dark-theme');
+      btn.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
+    });
+  });
+
+  // Logout Buttons
+  document.querySelectorAll('.logout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      signOut(auth);
+    });
+  });
+
+  // Track focused inputs for emoji helper
+  document.querySelectorAll('input[type="text"], textarea').forEach(el => {
+    el.addEventListener('focus', () => { lastFocusedInput = el; });
+  });
+
+  // Close emoji picker when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#emoji-picker-dropdown') && !e.target.closest('.emoji-trigger-btn')) {
+      document.getElementById('emoji-picker-dropdown')?.classList.add('hidden');
     }
+  });
 
-    elements.pageAuthSubmitBtn.textContent = isSignUpMode ? 'Sign Up' : 'Log In';
-    elements.authSwitchPrompt.innerHTML = isSignUpMode
-      ? `Already have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Log In</a>`
-      : `Don't have an account? <a href="#" id="authRedirectBtn" style="color: var(--color-red); font-weight: bold; text-decoration: underline;">Sign Up</a>`;
-
-    document.getElementById('authRedirectBtn')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      setAuthMode(!isSignUpMode);
-    });
-
-    if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
-  }
-
-  function bindEvents() {
-    elements.tabLoginBtn?.addEventListener('click', () => setAuthMode(false));
-    elements.tabSignupBtn?.addEventListener('click', () => setAuthMode(true));
-
-    document.getElementById('authRedirectBtn')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      setAuthMode(!isSignUpMode);
-    });
-
-    elements.forgotPasswordBtn?.addEventListener('click', async () => {
-      const email = elements.pageAuthEmail.value.trim();
-      if (!email) {
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = 'Please enter your email address to reset password.';
-        return;
-      }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        showToast('Password reset link sent to your email.');
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
-      } catch (err) {
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message;
-      }
-    });
-
-    elements.authPageForm?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (elements.authErrorMsg) elements.authErrorMsg.textContent = '';
-
-      const email = elements.pageAuthEmail.value.trim();
-      const password = elements.pageAuthPassword.value;
-
-      try {
-        if (isSignUpMode) {
-          const name = elements.pageAuthName.value.trim();
-          const phone = elements.pageAuthPhone.value.trim();
-          const district = elements.pageAuthDistrict.value.trim();
-          const village = elements.pageAuthVillage.value.trim();
-
-          if (!name) throw new Error('Full Name is required.');
-
-          const userCred = await createUserWithEmailAndPassword(auth, email, password);
-          await updateProfile(userCred.user, { displayName: name });
-
-          await set(ref(database, `users/${userCred.user.uid}`), {
-            displayName: name,
-            email: email,
-            phone: phone,
-            district: district,
-            village: village,
-            createdAt: Date.now(),
-            isOnline: true
-          });
-
-          showToast('Account created successfully!');
-        } else {
-          await signInWithEmailAndPassword(auth, email, password);
-          showToast('Welcome back!');
-        }
-      } catch (err) {
-        if (elements.authErrorMsg) elements.authErrorMsg.textContent = err.message;
-      }
-    });
-
-    elements.navBtns.forEach(btn => btn.addEventListener('click', () => {
-      elements.navDrawer?.classList.add('open');
-      elements.drawerOverlay?.classList.add('active');
-    }));
-
-    elements.drawerCloseBtn?.addEventListener('click', closeDrawer);
-    elements.drawerOverlay?.addEventListener('click', closeDrawer);
-
-    elements.logoutBtns.forEach(btn => btn.addEventListener('click', () => {
-      if (currentUser) {
-        set(ref(database, `users/${currentUser.uid}/isOnline`), false);
-      }
-      signOut(auth).then(() => showToast('Logged out.'));
-      closeDrawer();
-    }));
-
-    elements.signupBtn?.addEventListener('click', () => {
-      setAuthMode(false);
-      updateAuthView(false);
-    });
-
-    elements.searchInput?.addEventListener('input', (e) => {
-      renderFeed(e.target.value.trim());
-    });
-
-    elements.searchActionBtn?.addEventListener('click', () => {
-      renderFeed(getCurrentSearchQuery());
-    });
-
-    elements.tabBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        window.switchTab(btn.dataset.tab);
-      });
-    });
-
-    document.querySelectorAll('.nav-link-item').forEach(link => {
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        const tab = link.dataset.tab;
-        if (tab) {
-          window.switchTab(tab);
-          closeDrawer();
-        }
-      });
-    });
-
-    elements.postPhotoInput?.addEventListener('change', (e) => handlePostFileSelect(e.target.files[0]));
-    elements.postFileInput?.addEventListener('change', (e) => handlePostFileSelect(e.target.files[0]));
-
-    elements.postBtn?.addEventListener('click', handleCreatePost);
-
-    elements.loadMorePostsBtn?.addEventListener('click', () => {
-      postsLimit += 25;
-      listenToPosts();
-    });
-
-    // FLOATING PLUS BUTTON & POPUP MENU REDIRECT EVENTS
-    elements.fabBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      elements.fabOptions?.classList.toggle('hidden');
-      elements.fabBtn?.classList.toggle('active');
-    });
-
-    elements.fabChatBtn?.addEventListener('click', () => {
-      elements.fabOptions?.classList.add('hidden');
-      elements.fabBtn?.classList.remove('active');
-      window.switchTab('chats');
-    });
-
-    elements.fabCreatePostBtn?.addEventListener('click', () => {
-      elements.fabOptions?.classList.add('hidden');
-      elements.fabBtn?.classList.remove('active');
-      window.switchTab('posts');
-      const postBox = document.getElementById('postBox');
-      const postText = document.getElementById('postText');
-      if (postBox) postBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (postText) postText.focus();
-    });
-
-    document.addEventListener('click', (e) => {
-      if (elements.fabContainer && !elements.fabContainer.contains(e.target)) {
-        elements.fabOptions?.classList.add('hidden');
-        elements.fabBtn?.classList.remove('active');
-      }
-    });
-
-    elements.backToTopBtn?.addEventListener('click', () => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-
-    window.addEventListener('scroll', () => {
-      if (window.scrollY > 300) elements.backToTopBtn?.classList.remove('hidden');
-      else elements.backToTopBtn?.classList.add('hidden');
-    });
-
-    elements.chatSendBtn?.addEventListener('click', handleSendChatMessage);
-    elements.chatInput?.addEventListener('keypress', (e) => {
-      window.triggerTypingStatus();
-      if (e.key === 'Enter') handleSendChatMessage();
-    });
-
-    elements.chatInput?.addEventListener('focus', (e) => lastFocusedInput = e.target);
-    elements.postText?.addEventListener('focus', (e) => lastFocusedInput = e.target);
-
-    elements.chatFileInput?.addEventListener('change', (e) => handleChatFileSelect(e.target.files[0]));
-
-    elements.chatCloseBtn?.addEventListener('click', () => {
-      elements.chatPopup?.classList.add('hidden');
-    });
-
-    elements.voiceCallTrigger?.addEventListener('click', () => window.startCall(false));
-    elements.videoCallTrigger?.addEventListener('click', () => window.startCall(true));
-
-    document.getElementById('callEndBtn')?.addEventListener('click', window.endCall);
-
-    document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
-      document.getElementById('profileModal')?.classList.add('hidden');
-    });
-
-    document.getElementById('closeLightboxModalBtn')?.addEventListener('click', () => {
-      document.getElementById('avatarLightboxModal')?.classList.add('hidden');
-    });
-
-    document.getElementById('drawerProfileInfo')?.addEventListener('click', () => {
-      if (currentUser) {
-        window.openUserProfile(currentUser.uid);
-        closeDrawer();
-      }
-    });
-
-    document.getElementById('topBarUserProfile')?.addEventListener('click', () => {
-      if (currentUser) window.openUserProfile(currentUser.uid);
-    });
-
-    document.getElementById('markAllReadBtn')?.addEventListener('click', markAllNotificationsRead);
-
-    document.getElementById('profilePicInput')?.addEventListener('change', handleProfilePicUpload);
-
-    document.getElementById('saveSettingsBtn')?.addEventListener('click', async () => {
-      const nameInput = document.getElementById('settingsNameInput');
-      if (!nameInput || !currentUser) return;
-      const newName = nameInput.value.trim();
-      if (!newName) {
-        showToast('Name cannot be empty.');
-        return;
-      }
-      try {
-        await updateProfile(auth.currentUser, { displayName: newName });
-        await update(ref(database, `users/${currentUser.uid}`), { displayName: newName });
-        currentUser.name = newName;
-        updateAuthView(true);
-        showToast('Settings saved successfully.');
-      } catch (err) {
-        console.error("Save settings failed:", err);
-        showToast('Failed to save settings.');
-      }
-    });
-
-    document.getElementById('enablePushBtn')?.addEventListener('click', () => {
-      if ("Notification" in window) {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") showToast('Browser desktop alerts enabled!');
-          else showToast('Alerts permission denied.');
-        });
-      } else {
-        showToast('Desktop alerts not supported in this browser.');
-      }
-    });
-
-    document.addEventListener('click', (e) => {
-      const dropdown = document.getElementById('emoji-picker-dropdown');
-      if (dropdown && !dropdown.contains(e.target) && !e.target.closest('.emoji-trigger-btn')) {
-        dropdown.classList.add('hidden');
-      }
-    });
-  }
-
-  function handlePostFileSelect(file) {
+  // Post Photo/File Attach Handlers
+  document.getElementById('postPhotoInput')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
     if (!file) return;
     currentPostFile = file;
-
     const previewContainer = document.getElementById('postPreviewContainer');
-    const previewImg = document.getElementById('postPreviewImg');
-    const previewVid = document.getElementById('postPreviewVid');
-    const previewAud = document.getElementById('postPreviewAud');
-    const previewFile = document.getElementById('postPreviewFile');
+    const imgEl = document.getElementById('postPreviewImg');
+    const vidEl = document.getElementById('postPreviewVid');
+    const audEl = document.getElementById('postPreviewAud');
+    const fileEl = document.getElementById('postPreviewFile');
 
-    if (!previewContainer) return;
-
-    previewImg.style.display = 'none';
-    previewVid.style.display = 'none';
-    previewAud.style.display = 'none';
-    previewFile.style.display = 'none';
+    if (previewContainer) previewContainer.style.display = 'block';
+    if (imgEl) imgEl.style.display = 'none';
+    if (vidEl) vidEl.style.display = 'none';
+    if (audEl) audEl.style.display = 'none';
+    if (fileEl) fileEl.style.display = 'none';
 
     const url = URL.createObjectURL(file);
-
-    if (file.type.startsWith('image/')) {
-      previewImg.src = url;
-      previewImg.style.display = 'block';
-    } else if (file.type.startsWith('video/')) {
-      previewVid.src = url;
-      previewVid.style.display = 'block';
-    } else if (file.type.startsWith('audio/')) {
-      previewAud.src = url;
-      previewAud.style.display = 'block';
-    } else {
-      previewFile.textContent = `Attached: ${file.name}`;
-      previewFile.style.display = 'block';
+    if (file.type.startsWith('image/') && imgEl) {
+      imgEl.src = url;
+      imgEl.style.display = 'block';
+    } else if (file.type.startsWith('video/') && vidEl) {
+      vidEl.src = url;
+      vidEl.style.display = 'block';
+    } else if (file.type.startsWith('audio/') && audEl) {
+      audEl.src = url;
+      audEl.style.display = 'block';
     }
+  });
 
-    previewContainer.style.display = 'block';
-  }
-
-  function handleChatFileSelect(file) {
+  document.getElementById('postFileInput')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
     if (!file) return;
-    currentChatFile = file;
-    const chatPreviewContainer = document.getElementById('chatPreviewContainer');
-    const chatPreviewText = document.getElementById('chatPreviewText');
-    if (chatPreviewContainer && chatPreviewText) {
-      chatPreviewText.textContent = `Attachment: ${file.name}`;
-      chatPreviewContainer.style.display = 'flex';
+    currentPostFile = file;
+    const previewContainer = document.getElementById('postPreviewContainer');
+    const fileEl = document.getElementById('postPreviewFile');
+    if (previewContainer) previewContainer.style.display = 'block';
+    if (fileEl) {
+      fileEl.style.display = 'block';
+      fileEl.textContent = `Attached File: ${file.name}`;
     }
-  }
+  });
 
-  async function handleCreatePost() {
-    if (!currentUser) {
-      showToast("Please log in to publish posts.");
-      return;
-    }
-
-    const content = elements.postText ? elements.postText.value.trim() : '';
+  // Create Post Submit Handler
+  document.getElementById('createPostSubmitBtn')?.addEventListener('click', async () => {
+    const textInput = document.getElementById('postText');
+    const content = textInput ? textInput.value.trim() : '';
     if (!content && !currentPostFile) {
-      showToast("Please enter message content or attach a file.");
+      showToast("Please enter text or attach media to post.");
       return;
     }
 
-    if (elements.postBtn) elements.postBtn.disabled = true;
-
-    try {
-      let mediaUrl = null;
-      let mediaType = null;
-
-      if (currentPostFile) {
-        mediaUrl = await uploadMediaFile(currentPostFile, 'post_attachments');
-        if (currentPostFile.type.startsWith('image/')) mediaType = 'image';
-        else if (currentPostFile.type.startsWith('video/')) mediaType = 'video';
-        else if (currentPostFile.type.startsWith('audio/')) mediaType = 'audio';
-        else mediaType = 'file';
-      }
-
-      const newPostRef = push(ref(database, 'posts'));
-      await set(newPostRef, {
-        author: currentUser.name,
-        authorEmail: currentUser.email,
-        authorAvatarUrl: currentUser.avatarUrl || null,
-        uid: currentUser.uid,
-        content: content,
-        attachment: mediaUrl,
-        attachmentType: mediaType,
-        attachmentName: currentPostFile ? currentPostFile.name : null,
-        createdAt: Date.now()
-      });
-
-      if (elements.postText) elements.postText.value = '';
-      clearPostPreview();
-      showToast("Post published successfully!");
-    } catch (err) {
-      console.error("Create post error:", err);
-      showToast("Failed to create post.");
-    } finally {
-      if (elements.postBtn) elements.postBtn.disabled = false;
+    if (!currentUser) {
+      showToast("Please log in to post.");
+      return;
     }
-  }
 
-  async function handleSendChatMessage() {
-    if (!currentUser || !activeChatRoom) return;
-    const text = elements.chatInput ? elements.chatInput.value.trim() : '';
-
-    if (!text && !currentChatFile) return;
+    const btn = document.getElementById('createPostSubmitBtn');
+    if (btn) btn.disabled = true;
+    showToast("Publishing post...");
 
     try {
       let attachmentUrl = null;
       let attachmentType = null;
+      let attachmentName = null;
 
-      if (currentChatFile) {
-        attachmentUrl = await uploadMediaFile(currentChatFile, 'chat_attachments');
-        if (currentChatFile.type.startsWith('image/')) attachmentType = 'image';
+      if (currentPostFile) {
+        attachmentUrl = await uploadMediaFile(currentPostFile, 'posts_media');
+        attachmentName = currentPostFile.name;
+        if (currentPostFile.type.startsWith('image/')) attachmentType = 'image';
+        else if (currentPostFile.type.startsWith('video/')) attachmentType = 'video';
+        else if (currentPostFile.type.startsWith('audio/')) attachmentType = 'audio';
         else attachmentType = 'file';
       }
 
-      const msgRef = push(ref(database, `chats/${activeChatRoom}`));
-      await set(msgRef, {
+      const newPostRef = push(ref(database, 'posts'));
+      await set(newPostRef, {
+        uid: currentUser.uid,
+        author: currentUser.name,
+        authorEmail: currentUser.email,
+        authorAvatarUrl: currentUser.avatarUrl || null,
+        content: content,
+        attachment: attachmentUrl,
+        attachmentType: attachmentType,
+        attachmentName: attachmentName,
+        createdAt: Date.now()
+      });
+
+      if (textInput) textInput.value = '';
+      window.clearPostPreview();
+      showToast("Post published successfully!");
+    } catch (err) {
+      console.error("Failed to create post:", err);
+      showToast("Failed to publish post.");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // Search Action
+  document.getElementById('searchActionBtn')?.addEventListener('click', () => {
+    renderFeed(getCurrentSearchQuery());
+  });
+  document.getElementById('searchInput')?.addEventListener('input', (e) => {
+    renderFeed(e.target.value.trim());
+  });
+
+  // Chat Send Handler
+  document.getElementById('chatSendBtn')?.addEventListener('click', async () => {
+    const input = document.getElementById('chatInput');
+    const text = input ? input.value.trim() : '';
+    if (!text && !currentChatFile) return;
+    if (!currentUser || !activeChatRoom) return;
+
+    try {
+      let attachmentUrl = null;
+      let attachmentType = null;
+      let attachmentName = null;
+
+      if (currentChatFile) {
+        attachmentUrl = await uploadMediaFile(currentChatFile, 'chat_media');
+        attachmentName = currentChatFile.name;
+        attachmentType = currentChatFile.type.startsWith('image/') ? 'image' : 'file';
+      }
+
+      const chatMsgRef = push(ref(database, `chats/${activeChatRoom}`));
+      await set(chatMsgRef, {
         senderUid: currentUser.uid,
         senderName: currentUser.name,
         text: text,
         attachment: attachmentUrl,
         attachmentType: attachmentType,
-        attachmentName: currentChatFile ? currentChatFile.name : null,
+        attachmentName: attachmentName,
         createdAt: Date.now(),
         read: false
       });
 
-      if (elements.chatInput) elements.chatInput.value = '';
-      clearChatPreview();
+      if (input) input.value = '';
+      window.clearChatPreview();
+      set(ref(database, `typing/${activeChatRoom}/${currentUser.uid}`), false);
 
       if (activeChatRecipientUid) {
-        sendNotification(activeChatRecipientUid, currentUser.name, 'sent you a message.', 'fa-comment');
+        sendNotification(activeChatRecipientUid, currentUser.name, `sent you a message: "${text.substring(0, 30)}..."`, 'fa-comment-dots');
       }
-
-      set(ref(database, `typing/${activeChatRoom}/${currentUser.uid}`), false);
     } catch (err) {
       console.error("Failed to send chat message:", err);
+      showToast("Could not send message.");
     }
-  }
+  });
 
-  async function handleProfilePicUpload(e) {
+  document.getElementById('chatInput')?.addEventListener('input', window.triggerTypingStatus);
+  document.getElementById('chatInput')?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      document.getElementById('chatSendBtn')?.click();
+    }
+  });
+
+  document.getElementById('chatCloseBtn')?.addEventListener('click', () => {
+    chatPopup?.classList.add('hidden');
+    if (activeChatRef && activeChatCallback) off(activeChatRef, 'value', activeChatCallback);
+    if (activeTypingListenerRef && activeTypingListenerCallback) off(activeTypingListenerRef, 'value', activeTypingListenerCallback);
+    activeChatRoom = null;
+  });
+
+  // Call triggers in chat
+  document.getElementById('voiceCallTrigger')?.addEventListener('click', () => window.startCall(false));
+  document.getElementById('videoCallTrigger')?.addEventListener('click', () => window.startCall(true));
+  document.getElementById('callEndBtn')?.addEventListener('click', window.endCall);
+
+  // Modal Closers
+  document.getElementById('closeProfileModalBtn')?.addEventListener('click', () => {
+    document.getElementById('profileModal')?.classList.add('hidden');
+  });
+  document.getElementById('closeLightboxModalBtn')?.addEventListener('click', () => {
+    document.getElementById('avatarLightboxModal')?.classList.add('hidden');
+  });
+  document.getElementById('toastCloseBtn')?.addEventListener('click', () => {
+    const toastNotice = document.getElementById('toastNotice');
+    if (toastNotice) toastNotice.style.display = 'none';
+  });
+
+  // Settings Avatar & Profile Update
+  document.getElementById('profilePicInput')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file || !currentUser) return;
-
+    showToast("Uploading custom picture...");
     try {
-      showToast('Uploading profile picture...');
-      const downloadUrl = await uploadMediaFile(file, `profile_pictures/${currentUser.uid}`);
-      if (downloadUrl) {
-        await updateProfile(auth.currentUser, { photoURL: downloadUrl });
-        await update(ref(database, `users/${currentUser.uid}`), { avatarUrl: downloadUrl });
-        currentUser.avatarUrl = downloadUrl;
-        updateAuthView(true);
-        showToast('Profile picture updated successfully!');
+      const url = await uploadMediaFile(file, 'profile_pictures');
+      if (url) {
+        await updateProfile(auth.currentUser, { photoURL: url });
+        await set(ref(database, `users/${currentUser.uid}/avatarUrl`), url);
+        currentUser.avatarUrl = url;
+        applyAvatarStyle(document.getElementById('settingsAvatarPreview'), url, currentUser.name);
+        applyAvatarStyle(document.getElementById('topBarProfileAvatar'), url, currentUser.name);
+        applyAvatarStyle(document.getElementById('drawerProfileAvatar'), url, currentUser.name);
+        showToast("Profile picture updated successfully!");
       }
     } catch (err) {
-      console.error("Profile picture upload error:", err);
-      showToast('Failed to upload picture.');
+      console.error("Failed to update profile pic:", err);
+      showToast("Failed to upload profile picture.");
     }
-  }
+  });
 
-  function listenToAuthState() {
-    onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        let userData = {};
-        try {
-          const userSnapshot = await get(ref(database, `users/${user.uid}`));
-          if (userSnapshot.exists()) {
-            userData = userSnapshot.val();
-          }
-        } catch (err) {
-          console.warn("Could not load user profile data:", err);
-        }
+  document.getElementById('saveSettingsBtn')?.addEventListener('click', async () => {
+    const nameInput = document.getElementById('settingsNameInput');
+    const newName = nameInput ? nameInput.value.trim() : '';
+    if (!newName || !currentUser) return;
 
-        currentUser = {
-          uid: user.uid,
-          name: userData.displayName || user.displayName || user.email.split('@')[0],
-          email: user.email,
-          avatarUrl: userData.avatarUrl || user.photoURL || null
-        };
-        
-        setupPresenceSystem(user);
-        updateAuthView(true);
-        listenToNotifications();
-        listenToUserSocialData();
-      } else {
-        currentUser = null;
-        detachUserListeners();
-        updateAuthView(false);
-      }
-    });
-  }
-
-  function listenToUserSocialData() {
-    if (!currentUser) return;
-
-    if (friendsRef && friendsCallback) off(friendsRef, 'value', friendsCallback);
-    friendsRef = ref(database, `friends/${currentUser.uid}`);
-    friendsCallback = (snap) => {
-      friendsList = snap.exists() ? Object.keys(snap.val()) : [];
-      renderUsersList();
-    };
-    onValue(friendsRef, friendsCallback);
-
-    if (bookmarksRef && bookmarksCallback) off(bookmarksRef, 'value', bookmarksCallback);
-    bookmarksRef = ref(database, `users/${currentUser.uid}/bookmarks`);
-    bookmarksCallback = (snap) => {
-      userBookmarks = snap.exists() ? snap.val() : {};
-      renderFeed(getCurrentSearchQuery());
-    };
-    onValue(bookmarksRef, bookmarksCallback);
-
-    if (requestsRef && requestsCallback) off(requestsRef, 'value', requestsCallback);
-    requestsRef = ref(database, `friendRequests/${currentUser.uid}`);
-    requestsCallback = (snap) => {
-      pendingRequests = [];
-      if (snap.exists()) {
-        Object.keys(snap.val()).forEach(uid => {
-          pendingRequests.push({ uid, ...snap.val()[uid] });
-        });
-      }
-      renderUsersList();
-    };
-    onValue(requestsRef, requestsCallback);
-
-    if (sentRequestsRef && sentRequestsCallback) off(sentRequestsRef, 'value', sentRequestsCallback);
-    sentRequestsRef = ref(database, `sentRequests/${currentUser.uid}`);
-    sentRequestsCallback = (snap) => {
-      sentRequests = snap.exists() ? Object.keys(snap.val()) : [];
-      renderUsersList();
-    };
-    onValue(sentRequestsRef, sentRequestsCallback);
-  }
-
-  function listenToUsers() {
-    const usersQuery = query(ref(database, 'users'), limitToLast(100));
-
-    onValue(usersQuery, (snapshot) => {
-      const data = snapshot.val();
-      usersList = [];
-      if (data) {
-        Object.keys(data).forEach(uid => {
-          usersList.push({ uid, ...data[uid] });
-        });
-      }
-      renderUsersList();
-    });
-  }
-
-  function renderUsersList() {
-    const chatsContainer = document.getElementById('chatsListContainer');
-    const findFriendsContainer = document.getElementById('friendsListContainer');
-    const sidebarContainer = document.getElementById('sidebarMembersContainer');
-
-    const otherMembers = usersList.filter(u => !currentUser || u.uid !== currentUser.uid);
-    const loggedAndAddedFriends = otherMembers.filter(u => u.isOnline || friendsList.includes(u.uid));
-
-    if (chatsContainer) {
-      chatsContainer.innerHTML = loggedAndAddedFriends.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No logged-in or added friends available.</p>' : loggedAndAddedFriends.map(u => {
-        const isFriend = friendsList.includes(u.uid);
-        return `
-        <div class="friend-item" style="padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
-          <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
-            <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-              <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
-              <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
-            </div>
-            <div>
-              <strong style="font-size: 14px; display: block;">${escapeHTML(u.displayName || 'Member')} ${isFriend ? '<span style="font-size: 10px; color: var(--color-red); font-weight: normal;">(Friend)</span>' : ''}</strong>
-              <span style="font-size: 11px; opacity: 0.7;">${u.isOnline ? 'Online now' : 'Offline'}</span>
-            </div>
-          </div>
-          <button class="chat-btn" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i> Chat</button>
-        </div>
-      `;
-      }).join('');
-    }
-
-    if (findFriendsContainer) {
-      let html = '';
-
-      if (pendingRequests.length > 0) {
-        html += `<h4 style="margin: 10px 0 5px; font-size: 13px; color: var(--color-red);">Pending Requests</h4>`;
-        html += pendingRequests.map(req => `
-          <div class="friend-item" style="margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.02); border-radius: 6px;">
-            <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${req.uid}')">
-              <div class="avatar">${getInitials(req.fromName)}</div>
-              <div><strong>${escapeHTML(req.fromName)}</strong></div>
-            </div>
-            <button class="chat-btn" style="background: var(--color-red); color: white;" onclick="acceptFriendRequest('${req.uid}', '${escapeHTML(req.fromName)}')"><i class="fa-solid fa-user-check"></i> Accept</button>
-          </div>
-        `).join('');
-      }
-
-      html += `<h4 style="margin: 15px 0 5px; font-size: 13px; color: #888;">Find Friends Network</h4>`;
-      html += otherMembers.length === 0 ? '<p style="color:#888; font-size:13px; padding:10px;">No other members to display.</p>' : otherMembers.map(u => {
-        const isFriend = friendsList.includes(u.uid);
-        const isSent = sentRequests.includes(u.uid);
-
-        let actionBtn = `<button class="chat-btn" onclick="sendFriendRequest('${u.uid}')"><i class="fa-solid fa-user-plus"></i> Add Friend</button>`;
-        if (isFriend) {
-          actionBtn = `<button class="chat-btn" style="opacity: 0.7;" onclick="removeFriend('${u.uid}')"><i class="fa-solid fa-user-minus"></i> Remove</button>`;
-        } else if (isSent) {
-          actionBtn = `<button class="chat-btn" disabled style="opacity: 0.5;"><i class="fa-solid fa-clock"></i> Pending</button>`;
-        }
-
-        return `
-          <div class="friend-item" style="margin-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;">
-            <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
-              <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-                <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
-                <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
-              </div>
-              <div>
-                <strong>${escapeHTML(u.displayName || 'Member')}</strong>
-                <span style="display: block; font-size: 11px; opacity: 0.6;">${escapeHTML(u.email || 'Soroti Youth Forum')}</span>
-              </div>
-            </div>
-            ${actionBtn}
-          </div>
-        `;
-      }).join('');
-
-      findFriendsContainer.innerHTML = html;
-    }
-
-    if (sidebarContainer) {
-      sidebarContainer.innerHTML = loggedAndAddedFriends.length === 0 ? '<p style="color:#888; font-size:12px;">No logged or added friends active right now.</p>' : loggedAndAddedFriends.slice(0, 8).map(u => `
-        <div class="friend-item" style="margin-bottom: 8px;">
-          <div class="friend-user" style="cursor: pointer;" onclick="openUserProfile('${u.uid}')">
-            <div class="avatar-wrapper ${u.isOnline ? 'online' : ''}">
-              <div class="avatar" style="${u.avatarUrl ? `background-image: url('${u.avatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${u.avatarUrl ? '' : getInitials(u.displayName)}</div>
-              <div class="online-dot ${u.isOnline ? 'active' : ''}"></div>
-            </div>
-            <span style="font-size: 13px; font-weight: 500;">${escapeHTML(u.displayName || 'Member')}</span>
-          </div>
-          <button class="chat-btn" style="padding: 4px 8px; font-size: 11px;" onclick="openChatFromTab('${u.uid}', '${escapeHTML(u.displayName || 'Member')}')"><i class="fa-solid fa-comment"></i></button>
-        </div>
-      `).join('');
-    }
-  }
-
-  function listenToNotifications() {
-    if (!currentUser) return;
-
-    if (notifRef && notifCallback) off(notifRef, 'value', notifCallback);
-
-    notifRef = ref(database, `notifications/${currentUser.uid}`);
-    notifCallback = (snapshot) => {
-      const data = snapshot.val();
-      const notifContainer = document.getElementById('notificationsContainer');
-      const badges = document.querySelectorAll('.notif-badge');
-
-      if (!notifContainer) return;
-
-      if (!data) {
-        notifContainer.innerHTML = '<p style="color:#888; font-size:13px; text-align:center; padding:15px 0;">No notifications yet.</p>';
-        badges.forEach(b => {
-          b.textContent = '0';
-          b.style.display = 'none';
-        });
-        return;
-      }
-
-      const notifList = Object.entries(data).map(([id, val]) => ({ id, ...val }));
-      notifList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-      const unreadCount = notifList.filter(n => !n.read).length;
-      badges.forEach(b => {
-        b.textContent = unreadCount;
-        b.style.display = unreadCount > 0 ? 'inline-block' : 'none';
+    try {
+      await updateProfile(auth.currentUser, { displayName: newName });
+      await update(ref(database, `users/${currentUser.uid}`), {
+        name: newName,
+        displayName: newName
       });
-
-      notifContainer.innerHTML = notifList.map(item => `
-        <div style="padding: 10px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: ${item.read ? 'transparent' : 'var(--item-hover-bg)'}; border-radius: 6px; margin-bottom: 6px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <i class="fa-solid ${item.icon || 'fa-bell'}" style="color: var(--color-red); font-size: 16px;"></i>
-            <div>
-              <div style="font-size: 13px; font-weight: ${item.read ? 'normal' : 'bold'};"><strong>${escapeHTML(item.title || '')}</strong> ${escapeHTML(item.message || '')}</div>
-              <span style="font-size: 10px; opacity: 0.6;">${item.createdAt ? timeAgo(item.createdAt) : (item.time || '')}</span>
-            </div>
-          </div>
-          ${!item.read ? `<button onclick="markNotificationRead('${item.id}')" style="background:none; border:none; color:var(--color-red); cursor:pointer; font-size:12px;" title="Mark as Read"><i class="fa-solid fa-check"></i></button>` : ''}
-        </div>
-      `).join('');
-    };
-
-    onValue(notifRef, notifCallback);
-  }
-
-  window.markNotificationRead = async function(notifId) {
-    if (!currentUser || !notifId) return;
-    try {
-      await update(ref(database, `notifications/${currentUser.uid}/${notifId}`), { read: true });
+      currentUser.name = newName;
+      currentUser.displayName = newName;
+      document.querySelectorAll('.profile-name').forEach(el => { el.textContent = newName; });
+      showToast("Account settings saved!");
     } catch (err) {
-      console.error("Failed to mark notification as read:", err);
+      console.error("Failed to save settings:", err);
+      showToast("Failed to save changes.");
     }
-  };
+  });
 
-  async function markAllNotificationsRead() {
-    if (!currentUser) return;
-    try {
-      const userNotifRef = ref(database, `notifications/${currentUser.uid}`);
-      const snap = await get(userNotifRef);
-      if (snap.exists()) {
-        const updates = {};
-        Object.keys(snap.val()).forEach(id => {
-          updates[`${id}/read`] = true;
-        });
-        await update(userNotifRef, updates);
-        showToast("All notifications marked as read.");
-      }
-    } catch (err) {
-      console.error("Failed to mark all read:", err);
-    }
-  }
+  // Firebase Auth State Observer
+  onAuthStateChanged(auth, async (user) => {
+    const authScreen = document.getElementById('authScreen');
+    const appContent = document.getElementById('appContent');
+    const topBarUserProfile = document.getElementById('topBarUserProfile');
+    const signupBtn = document.querySelector('.signup-btn');
 
-  function listenToPosts() {
-    if (currentPostsQueryRef) {
-      off(currentPostsQueryRef);
-    }
+    detachUserListeners();
 
-    currentPostsQueryRef = query(ref(database, 'posts'), limitToLast(postsLimit));
+    if (user) {
+      currentUser = {
+        uid: user.uid,
+        name: user.displayName || user.email.split('@')[0],
+        email: user.email,
+        avatarUrl: user.photoURL || null
+      };
 
-    onValue(currentPostsQueryRef, (snapshot) => {
-      const data = snapshot.val();
-      postsList = [];
-      if (data) {
-        Object.entries(data).forEach(([id, val]) => {
-          postsList.push({ id, ...val });
-        });
-      }
-      postsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      renderFeed(getCurrentSearchQuery());
-      if (modalCurrentUid) {
-        renderModalUserPosts();
-      }
-    });
-  }
+      authScreen?.classList.add('hidden');
+      appContent?.classList.remove('hidden');
+      topBarUserProfile?.classList.remove('hidden');
+      if (signupBtn) signupBtn.style.display = 'none';
 
-  function renderFeed(filterText = '') {
-    const feedContainer = document.getElementById('feedContainer');
-    if (!feedContainer) return;
-
-    let filtered = postsList;
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      filtered = postsList.filter(p => 
-        (p.author && p.author.toLowerCase().includes(q)) ||
-        (p.content && p.content.toLowerCase().includes(q)) ||
-        (p.attachmentName && p.attachmentName.toLowerCase().includes(q))
-      );
-    }
-
-    if (filtered.length === 0) {
-      feedContainer.innerHTML = `<div class="card" style="text-align: center; color: #888; padding: 25px;"><i class="fa-solid fa-newspaper" style="font-size: 28px; margin-bottom: 8px; color: var(--color-red);"></i><p>No posts found${filterText ? ' matching your search' : ''}.</p></div>`;
-      return;
-    }
-
-    feedContainer.innerHTML = filtered.map(post => {
-      const isBookmarked = userBookmarks && userBookmarks[post.id];
-      const likesCount = post.likes ? Object.keys(post.likes).length : 0;
-      const dislikesCount = post.dislikes ? Object.keys(post.dislikes).length : 0;
-      const isLiked = currentUser && post.likes && post.likes[currentUser.uid];
-      const isDisliked = currentUser && post.dislikes && post.dislikes[currentUser.uid];
-      const isOwner = currentUser && (post.uid === currentUser.uid || post.authorEmail === currentUser.email);
-      const displayTime = post.createdAt ? timeAgo(post.createdAt) : (post.time || 'Recently');
-
-      let commentsListHTML = '';
-      let commentCount = 0;
-      if (post.comments) {
-        const cArray = Object.entries(post.comments).map(([cid, cval]) => ({ cid, ...cval }));
-        commentCount = cArray.length;
-        commentsListHTML = cArray.map(c => `
-          <div style="font-size: 12px; margin-bottom: 6px; padding: 6px 8px; background: var(--item-hover-bg); border-radius: 6px; display: flex; align-items: flex-start; gap: 8px;">
-            <div class="avatar comment-avatar" style="${c.authorAvatarUrl ? `background-image: url('${c.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${c.authorAvatarUrl ? '' : getInitials(c.author)}</div>
-            <div style="flex: 1;">
-              <strong style="cursor: pointer;" onclick="openUserProfile('${c.uid}')">${escapeHTML(c.author || 'Anonymous')}</strong>
-              <span style="display: block; font-size: 11px; opacity: 0.9;">${escapeHTML(c.text || '')}</span>
-            </div>
-          </div>
-        `).join('');
-      }
-
-      let attachmentHTML = '';
-      if (post.attachment) {
-        const type = post.attachmentType || '';
-        if (type === 'image') {
-          attachmentHTML = `<div class="media-attachment-container"><img src="${escapeHTML(post.attachment)}" style="width: 100%; max-height: 450px; object-fit: contain; display: block;" /></div>`;
-        } else if (type === 'video') {
-          attachmentHTML = `<div class="media-attachment-container"><video src="${escapeHTML(post.attachment)}" controls style="width: 100%; max-height: 400px; display: block;"></video></div>`;
-        } else if (type === 'audio') {
-          attachmentHTML = `<div class="media-attachment-container" style="padding: 10px; background: var(--card-bg);"><audio src="${escapeHTML(post.attachment)}" controls style="width: 100%;"></audio></div>`;
-        } else {
-          attachmentHTML = `
-            <div style="margin: 10px 0; background: var(--item-hover-bg); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border-color);">
-              <a href="${escapeHTML(post.attachment)}" target="_blank" download style="color: var(--text-color); font-weight: bold; text-decoration: none; display: flex; align-items: center; gap: 8px;">
-                <i class="fa-solid fa-file-arrow-down" style="color: var(--color-red); font-size: 18px;"></i> ${escapeHTML(post.attachmentName || 'Download File Attachment')}
-              </a>
-            </div>`;
+      // Fetch additional user profile record from database
+      try {
+        const userSnap = await get(ref(database, `users/${user.uid}`));
+        if (userSnap.exists()) {
+          const userData = userSnap.val();
+          currentUser.name = userData.displayName || userData.name || currentUser.name;
+          currentUser.avatarUrl = userData.avatarUrl || currentUser.avatarUrl;
+          const nameInputs = document.querySelectorAll('#settingsNameInput, #pageAuthName');
+          nameInputs.forEach(input => { if (input) input.value = currentUser.name; });
+          const emailInput = document.getElementById('settingsEmailInput');
+          if (emailInput) emailInput.value = currentUser.email;
         }
+      } catch (err) {
+        console.warn("Could not fetch user record:", err);
       }
 
-      return `
-        <div class="card post-card" id="post-${post.id}">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;" onclick="openUserProfile('${post.uid}')">
-              <div class="avatar profile-avatar" style="${post.authorAvatarUrl ? `background-image: url('${post.authorAvatarUrl}'); background-size: cover; background-position: center; color: transparent;` : ''}">${post.authorAvatarUrl ? '' : getInitials(post.author)}</div>
-              <div>
-                <strong style="font-size: 14px; display: block;">${escapeHTML(post.author || 'Member')}</strong>
-                <span style="font-size: 11px; opacity: 0.6;"><i class="fa-regular fa-clock"></i> ${escapeHTML(displayTime)} ${post.isEdited ? '(edited)' : ''}</span>
-              </div>
-            </div>
+      // Apply avatars
+      applyAvatarStyle(document.getElementById('topBarProfileAvatar'), currentUser.avatarUrl, currentUser.name);
+      applyAvatarStyle(document.getElementById('drawerProfileAvatar'), currentUser.avatarUrl, currentUser.name);
+      applyAvatarStyle(document.getElementById('settingsAvatarPreview'), currentUser.avatarUrl, currentUser.name);
+      document.querySelectorAll('.profile-name').forEach(el => { el.textContent = currentUser.name; });
+      const drawerEmail = document.querySelector('.drawer-user-info .profile-email');
+      if (drawerEmail) drawerEmail.textContent = currentUser.email;
 
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" onclick="toggleBookmark(this, '${post.id}')" title="Bookmark Post">
-                <i class="fa-${isBookmarked ? 'solid' : 'regular'} fa-bookmark"></i>
-              </button>
-              ${isOwner ? `
-                <button onclick="toggleEditPost('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--text-color); opacity: 0.7;" title="Edit Post"><i class="fa-solid fa-pen"></i></button>
-                <button onclick="deletePost('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--color-red);" title="Delete Post"><i class="fa-solid fa-trash"></i></button>
-              ` : ''}
-            </div>
-          </div>
+      setupPresenceSystem(user);
 
-          <div id="postContent-${post.id}">
-            ${post.content ? `<p style="font-size: 14px; line-height: 1.5; margin-bottom: 10px; white-space: pre-wrap;">${escapeHTML(post.content)}</p>` : ''}
-          </div>
+      // Setup user-specific listeners
+      callHistoryRef = ref(database, `calls/${user.uid}`);
+      callHistoryCallback = (snap) => {
+        const data = snap.val();
+        callHistoryList = data ? Object.values(data).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) : [];
+        renderCallHistoryView();
+      };
+      onValue(callHistoryRef, callHistoryCallback);
 
-          <div id="editPostContainer-${post.id}" class="hidden" style="margin-bottom: 10px;">
-            <textarea id="editPostInput-${post.id}" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 13px;" rows="3">${escapeHTML(post.content || '')}</textarea>
-            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;">
-              <button onclick="toggleEditPost('${post.id}')" style="padding: 4px 10px; font-size: 12px; background: transparent; border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px; cursor: pointer;">Cancel</button>
-              <button onclick="saveEditPost('${post.id}')" class="post-btn" style="padding: 4px 12px; font-size: 12px;">Save</button>
-            </div>
-          </div>
+      friendsRef = ref(database, `friends/${user.uid}`);
+      friendsCallback = (snap) => {
+        const data = snap.val();
+        friendsList = data ? Object.keys(data) : [];
+        renderFriendsView();
+        renderSidebarMembers();
+      };
+      onValue(friendsRef, friendsCallback);
 
-          ${attachmentHTML}
+      bookmarksRef = ref(database, `users/${user.uid}/bookmarks`);
+      bookmarksCallback = (snap) => {
+        userBookmarks = snap.val() || {};
+        renderFeed(getCurrentSearchQuery());
+      };
+      onValue(bookmarksRef, bookmarksCallback);
 
-          <div style="display: flex; gap: 15px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-top: 10px; font-size: 13px;">
-            <button onclick="toggleLike('${post.id}')" style="background: none; border: none; cursor: pointer; color: ${isLiked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isLiked ? 'bold' : 'normal'}; display: flex; align-items: center; gap: 5px;">
-              <i class="fa-${isLiked ? 'solid' : 'regular'} fa-heart"></i> ${likesCount}
-            </button>
-            <button onclick="toggleDislike('${post.id}')" style="background: none; border: none; cursor: pointer; color: ${isDisliked ? 'var(--color-red)' : 'var(--text-color)'}; font-weight: ${isDisliked ? 'bold' : 'normal'}; display: flex; align-items: center; gap: 5px;">
-              <i class="fa-${isDisliked ? 'solid' : 'regular'} fa-thumbs-down"></i> ${dislikesCount}
-            </button>
-            <button onclick="toggleCommentSection('${post.id}')" style="background: none; border: none; cursor: pointer; color: var(--text-color); display: flex; align-items: center; gap: 5px;">
-              <i class="fa-regular fa-comment"></i> ${commentCount}
-            </button>
-          </div>
+      requestsRef = ref(database, `friendRequests/${user.uid}`);
+      requestsCallback = (snap) => {
+        const data = snap.val();
+        pendingRequests = data ? Object.entries(data).map(([uid, r]) => ({ uid, ...r })) : [];
+        renderFriendsView();
+      };
+      onValue(requestsRef, requestsCallback);
 
-          <div id="commentSection-${post.id}" class="hidden" style="margin-top: 12px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
-            <div style="margin-bottom: 10px;">${commentsListHTML}</div>
-            <div style="display: flex; gap: 6px;">
-              <input type="text" id="commentInput-${post.id}" placeholder="Write a comment..." style="flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 12px;" onkeypress="if(event.key==='Enter') addComment('${post.id}')" />
-              <button onclick="addComment('${post.id}')" class="post-btn" style="padding: 6px 12px; font-size: 12px;">Reply</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
+      sentRequestsRef = ref(database, `sentRequests/${user.uid}`);
+      sentRequestsCallback = (snap) => {
+        const data = snap.val();
+        sentRequests = data ? Object.keys(data) : [];
+        renderFriendsView();
+      };
+      onValue(sentRequestsRef, sentRequestsCallback);
 
-  function setupPreviewContainers() {
-    const postBox = document.getElementById('postBox');
-    if (postBox && !document.getElementById('postPreviewContainer')) {
-      const container = document.createElement('div');
-      container.id = 'postPreviewContainer';
-      container.style.cssText = 'display: none; margin-top: 10px; position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color); background: #000; padding: 5px;';
-      
-      container.innerHTML = `
-        <button type="button" id="clearPostPreviewBtn" style="position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; z-index: 10;"><i class="fa-solid fa-xmark"></i></button>
-        <img id="postPreviewImg" style="display: none; max-width: 100%; max-height: 200px; margin: 0 auto; object-fit: contain;" />
-        <video id="postPreviewVid" controls style="display: none; width: 100%; max-height: 200px;"></video>
-        <audio id="postPreviewAud" controls style="display: none; width: 100%; margin-top: 25px;"></audio>
-        <div id="postPreviewFile" style="display: none; color: white; padding: 10px; font-size: 12px; word-break: break-all;"></div>
-      `;
-      postBox.appendChild(container);
+      listenToPosts();
+      listenToUsers();
 
-      document.getElementById('clearPostPreviewBtn')?.addEventListener('click', clearPostPreview);
+    } else {
+      currentUser = null;
+      authScreen?.classList.remove('hidden');
+      appContent?.classList.add('hidden');
+      topBarUserProfile?.classList.add('hidden');
+      if (signupBtn) signupBtn.style.display = 'inline-block';
     }
+  });
 
-    const chatInputRow = document.querySelector('.chat-input-row');
-    if (chatInputRow && !document.getElementById('chatPreviewContainer')) {
-      const container = document.createElement('div');
-      container.id = 'chatPreviewContainer';
-      container.style.cssText = 'display: none; padding: 6px 12px; background: var(--item-hover-bg); border-top: 1px solid var(--border-color); align-items: center; justify-content: space-between; font-size: 11px;';
-      
-      container.innerHTML = `
-        <span id="chatPreviewText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
-        <button type="button" id="clearChatPreviewBtn" style="background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 14px;"><i class="fa-solid fa-xmark"></i></button>
-      `;
-      chatInputRow.parentNode.insertBefore(container, chatInputRow);
-
-      document.getElementById('clearChatPreviewBtn')?.addEventListener('click', clearChatPreview);
-    }
-  }
-
-  function clearPostPreview() {
-    currentPostFile = null;
-    const previewContainer = document.getElementById('postPreviewContainer');
-    if (previewContainer) previewContainer.style.display = 'none';
-    if (elements.postPhotoInput) elements.postPhotoInput.value = '';
-    if (elements.postFileInput) elements.postFileInput.value = '';
-  }
-
-  function clearChatPreview() {
-    currentChatFile = null;
-    const chatPreviewContainer = document.getElementById('chatPreviewContainer');
-    if (chatPreviewContainer) chatPreviewContainer.style.display = 'none';
-    if (elements.chatFileInput) elements.chatFileInput.value = '';
-  }
-
-  init();
 });
