@@ -78,6 +78,32 @@ body {
   font-size: 14px;
 }
 
+/* Back To Top Floating Button */
+.back-to-top-btn {
+  position: fixed;
+  bottom: 90px;
+  right: 25px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--color-black);
+  color: white;
+  border: 1px solid var(--border-color);
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 890;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.back-to-top-btn:hover {
+  transform: translateY(-3px);
+  background: var(--color-red);
+}
+
 /* Modal Overlay & Popups */
 .modal-overlay {
   position: fixed;
@@ -1129,4 +1155,15 @@ header {
 .fab-option-btn:hover {
   background: #b20710;
   transform: scale(1.05);
+}
+
+@keyframes fabPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

@@ -114,15 +114,15 @@
           <div id="sidebarMembersContainer"></div>
         </div>
 
-        <button class="themeToggleBtn" title="Toggle Dark/Light Mode" style="margin-top: 15px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: transparent; cursor: pointer; color: var(--text-color); font-weight: bold;"><i class="fa-solid fa-moon"></i> Dark Mode</button>
-        <button class="logout-btn" style="margin-top: 10px; width: 100%;"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
+        <button class="themeToggleBtn" id="themeToggleBtn" title="Toggle Dark/Light Mode" style="margin-top: 15px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: transparent; cursor: pointer; color: var(--text-color); font-weight: bold;"><i class="fa-solid fa-moon"></i> Dark Mode</button>
+        <button class="logout-btn" id="logoutBtn" style="margin-top: 10px; width: 100%;"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
       </div>
     </aside>
 
     <header>
       <div class="top-bar">
         <div class="nav-left">
-          <button class="nav-btn" title="Open Navigation" aria-label="Open Navigation"><i class="fa-solid fa-bars"></i></button>
+          <button class="nav-btn" id="navDrawerOpenBtn" title="Open Navigation" aria-label="Open Navigation"><i class="fa-solid fa-bars"></i></button>
           <div class="logo">
             <img src="logo.png" alt="Soroti Youths Forum Logo" class="header-logo-img">
           </div>
@@ -131,11 +131,10 @@
         <div class="nav-right">
           <div class="user-profile hidden" id="topBarUserProfile" style="cursor: pointer;" title="View Your Profile">
             <div class="profile-details" style="text-align: right;">
-              <span class="profile-name">User</span>
+              <span class="profile-name" id="topBarUserName">User</span>
             </div>
             <div class="avatar profile-avatar online" id="topBarProfileAvatar">SY</div>
           </div>
-          <button class="signup-btn">Sign Up / Log In</button>
         </div>
       </div>
 
@@ -149,7 +148,7 @@
 
     <div class="container">
       
-      <main style="width: 100%; max-width: 800px; margin: 0 auto;">
+      <main style="width: 100%; max-width: 800px; margin: 0 auto; padding: 15px;">
         
         <div class="card action-tabs">
           <button class="tab-btn active" data-tab="posts"><i class="fa-solid fa-newspaper"></i> Posts</button>
@@ -331,7 +330,7 @@
             <span id="modalPostsCountBadge" style="font-size: 11px; opacity: 0.7;">0 posts</span>
           </h4>
           <div id="modalUserPostsContainer" class="modal-posts-container" style="flex: 1; overflow-y: auto; padding-right: 5px;">
-            <!-- User posts rendered dynamically with automatic infinity scroll -->
+            <!-- User posts rendered dynamically -->
           </div>
         </div>
 
